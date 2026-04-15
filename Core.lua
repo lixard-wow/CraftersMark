@@ -365,42 +365,39 @@ function addon:ShowResultsList(anchor)
 end
 
 function addon:ApplyFlyoutOverrides()
-    -- Find the shared flyout behavior mixin by signature and patch it once
-    if self._flyoutPatched then return end
-    local signature = {"GetElements", "IsElementEnabled", "GetUnownedFlags"}
-    for _, v in pairs(_G) do
-        if type(v) == "table" then
-            local ok, match = pcall(function()
-                for _, fn in ipairs(signature) do
-                    if type(v[fn]) ~= "function" then return false end
-                end
-                return true
-            end)
-            if ok and match then
-                local orig_enabled = v.IsElementEnabled
-                v.IsElementEnabled = function(b, ed, c)
-                    if addon.unlockAllEnabled then return true end
-                    return orig_enabled(b, ed, c)
-                end
-
-                local orig_flags = v.GetUnownedFlags
-                v.GetUnownedFlags = function(b, ...)
-                    if addon.unlockAllEnabled then
-                        return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
-                    end
-                    return orig_flags(b, ...)
-                end
-
-                local orig_elements = v.GetElements
-                v.GetElements = function(b, filterAvailable, ...)
-                    if addon.unlockAllEnabled then filterAvailable = false end
-                    return orig_elements(b, filterAvailable, ...)
-                end
-
-                self._flyoutPatched = true
-                break
+    -- Hook C_TradeSkillUI.GetHideUnownedFlags — controls whether unowned
+    -- items (crests, sparks) are shown in the reagent flyout picker
+    if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags
+        and not self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then
+        self:RawHook(C_TradeSkillUI, "GetHideUnownedFlags", function()
+            if addon.unlockAllEnabled then
+                return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
             end
-        end
+            return addon.hooks[C_TradeSkillUI]["GetHideUnownedFlags"]()
+        end, true)
+    end
+
+    -- Hook the named flyout mixins directly by global name
+    if _G.MCRFlyoutMixin and not self:IsHooked(_G.MCRFlyoutMixin, "IsElementEnabled") then
+        self:RawHook(_G.MCRFlyoutMixin, "IsElementEnabled", function(b, ed, c)
+            if addon.unlockAllEnabled then return true end
+            return addon.hooks[_G.MCRFlyoutMixin]["IsElementEnabled"](b, ed, c)
+        end, true)
+    end
+
+    if _G.OrderMCRFlyoutMixin and not self:IsHooked(_G.OrderMCRFlyoutMixin, "IsElementEnabled") then
+        self:RawHook(_G.OrderMCRFlyoutMixin, "IsElementEnabled", function(b, ed, c)
+            if addon.unlockAllEnabled then return true end
+            return addon.hooks[_G.OrderMCRFlyoutMixin]["IsElementEnabled"](b, ed, c)
+        end, true)
+    end
+
+    if _G.Professions and _G.Professions.GenerateItemsFromEligibleItemSlots
+        and not self:IsHooked(_G.Professions, "GenerateItemsFromEligibleItemSlots") then
+        self:RawHook(_G.Professions, "GenerateItemsFromEligibleItemSlots", function(r, fa)
+            if addon.unlockAllEnabled then return addon.hooks[_G.Professions]["GenerateItemsFromEligibleItemSlots"](r, false) end
+            return addon.hooks[_G.Professions]["GenerateItemsFromEligibleItemSlots"](r, fa)
+        end, true)
     end
 end
 
