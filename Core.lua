@@ -52,94 +52,7 @@ function addon:OnInitialize()
     self:SecureHookScript(cf.Details, "OnUpdate", "ShowSkillDetails")
     self:SecureHookScript(of.Details, "OnUpdate", "ShowSkillDetails")
 
-    self:InstallFlyoutHooks()
-    self:PatchFlyoutBehaviorMixin()
-
     print("|cff00ff00CraftersMark loaded|r")
-end
-
-function addon:PatchFlyoutBehaviorMixin()
-    local signature = {"GetElements", "IsElementEnabled", "GetUnownedFlags"}
-    for k, v in pairs(_G) do
-        if type(v) == "table" and type(k) == "string" then
-            local match = true
-            for i = 1, #signature do
-                if type(v[signature[i]]) ~= "function" then match = false; break end
-            end
-            if match then
-                self._flyoutMixin = v
-                break
-            end
-        end
-    end
-    local mx = self._flyoutMixin
-    if not mx then return end
-
-    local origGetElements = mx.GetElements
-    mx.GetElements = function(b, filterAvailable, ...)
-        if addon.unlockAllEnabled then filterAvailable = false end
-        return origGetElements(b, filterAvailable, ...)
-    end
-
-    local origEnabled = mx.IsElementEnabled
-    mx.IsElementEnabled = function(b, ed, c)
-        if addon.unlockAllEnabled then return true end
-        return origEnabled(b, ed, c)
-    end
-
-    local origValid = mx.IsElementValid
-    if type(origValid) == "function" then
-        mx.IsElementValid = function(b, ...)
-            if addon.unlockAllEnabled then return true end
-            return origValid(b, ...)
-        end
-    end
-
-    local origUnowned = mx.GetUnownedFlags
-    mx.GetUnownedFlags = function(b, ...)
-        if addon.unlockAllEnabled then
-            return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
-        end
-        return origUnowned(b, ...)
-    end
-end
-
-function addon:InstallFlyoutHooks()
-    if _G.MCRFlyoutMixin and not self:IsHooked(_G.MCRFlyoutMixin, "IsElementEnabled") then
-        local orig = _G.MCRFlyoutMixin.IsElementEnabled
-        self:RawHook(_G.MCRFlyoutMixin, "IsElementEnabled", function(b, ed, c)
-            if addon.unlockAllEnabled then return true end
-            return orig(b, ed, c)
-        end, true)
-    end
-
-    if _G.OrderMCRFlyoutMixin and not self:IsHooked(_G.OrderMCRFlyoutMixin, "IsElementEnabled") then
-        local orig = _G.OrderMCRFlyoutMixin.IsElementEnabled
-        self:RawHook(_G.OrderMCRFlyoutMixin, "IsElementEnabled", function(b, ed, c)
-            if addon.unlockAllEnabled then return true end
-            return orig(b, ed, c)
-        end, true)
-    end
-
-    if _G.Professions and _G.Professions.GenerateItemsFromEligibleItemSlots
-        and not self:IsHooked(_G.Professions, "GenerateItemsFromEligibleItemSlots") then
-        local orig = _G.Professions.GenerateItemsFromEligibleItemSlots
-        self:RawHook(_G.Professions, "GenerateItemsFromEligibleItemSlots", function(r, fa)
-            if addon.unlockAllEnabled then return orig(r, false) end
-            return orig(r, fa)
-        end, true)
-    end
-
-    if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags
-        and not self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then
-        local orig = C_TradeSkillUI.GetHideUnownedFlags
-        self:RawHook(C_TradeSkillUI, "GetHideUnownedFlags", function(r)
-            if addon.unlockAllEnabled then
-                return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
-            end
-            return orig(r)
-        end, true)
-    end
 end
 
 function addon:SetupChannel()
@@ -195,228 +108,6 @@ function addon:CreateOrdersAccess(parent)
     button:SetScript("OnClick", function(self) self.ordersFrame:Show() end)
 end
 
-function addon:PatchFlyoutFrame(flyout)
-    if not flyout then return end
-
-    if not flyout._cmOnShowHooked then
-        flyout._cmOnShowHooked = true
-        flyout:HookScript("OnShow", function(f) addon:PatchFlyoutFrame(f) end)
-    end
-
-    local behavior = flyout.behavior
-    if behavior and not behavior._cmPatched then
-        behavior._cmPatched = true
-
-        local origEnabled = behavior.IsElementEnabled
-        behavior.IsElementEnabled = function(b, ed, c)
-            if addon.unlockAllEnabled then return true end
-            if origEnabled then return origEnabled(b, ed, c) end
-            return false
-        end
-
-        local origValid = behavior.IsElementValid
-        if type(origValid) == "function" then
-            behavior.IsElementValid = function(b, ...)
-                if addon.unlockAllEnabled then return true end
-                return origValid(b, ...)
-            end
-        end
-
-        local origUnowned = behavior.GetUnownedFlags
-        if type(origUnowned) == "function" then
-            behavior.GetUnownedFlags = function(b, ...)
-                if addon.unlockAllEnabled then
-                    return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
-                end
-                return origUnowned(b, ...)
-            end
-        end
-
-        local origGetElements = behavior.GetElements
-        if type(origGetElements) == "function" then
-            behavior.GetElements = function(b, fa, ...)
-                if addon.unlockAllEnabled then fa = false end
-                return origGetElements(b, fa, ...)
-            end
-        end
-    end
-
-    local cb = flyout.HideUnownedCheckbox
-    if cb and cb.GetChecked and cb:GetChecked() then
-        cb:SetChecked(false)
-    end
-
-    if not addon._flyoutMixin and behavior and flyout._cmLastBehavior ~= behavior then
-        flyout._cmLastBehavior = behavior
-        local origPlaySound = PlaySound
-        PlaySound = function() end
-        if type(flyout.InitializeContents) == "function" then
-            pcall(flyout.InitializeContents, flyout)
-        elseif type(flyout.Init) == "function" then
-            pcall(flyout.Init, flyout)
-        end
-        PlaySound = origPlaySound
-    end
-end
-
-function addon:ForceFlyoutEntries()
-    if not self.unlockAllEnabled or not ProfessionsFrame then return end
-
-    local function walk(frame, depth)
-        if not frame or depth > 10 then return end
-        if frame.IsVisible and not frame:IsVisible() then return end
-
-        if frame.behavior and frame.HideUnownedCheckbox then
-            addon:PatchFlyoutFrame(frame)
-        end
-
-        if frame.GetObjectType and frame:GetObjectType() == "Button"
-            and type(frame.enabled) == "boolean"
-            and type(frame.count) == "number" then
-            frame.enabled = true
-            if frame.count < 999 then frame.count = 999 end
-            if frame.Enable then frame:Enable() end
-            if frame.Icon and frame.Icon.SetDesaturated then
-                frame.Icon:SetDesaturated(false)
-            end
-            if frame.Count and frame.Count.SetText then
-                frame.Count:SetText("999")
-                frame.Count:Show()
-            end
-        end
-
-        if frame.GetNumChildren then
-            local n = frame:GetNumChildren()
-            for i = 1, n do
-                walk(select(i, frame:GetChildren()), depth + 1)
-            end
-        end
-    end
-
-    walk(ProfessionsFrame, 0)
-end
-
-function addon:SetFlyoutTickerEnabled(on)
-    if on then
-        if not self.flyoutTicker then
-            self.flyoutTicker = CreateFrame("Frame")
-            self.flyoutTicker.elapsed = 0
-            self.flyoutTicker:SetScript("OnUpdate", function(t, dt)
-                t.elapsed = t.elapsed + dt
-                if t.elapsed < 0.15 then return end
-                t.elapsed = 0
-                addon:ForceFlyoutEntries()
-            end)
-        end
-        self.flyoutTicker:Show()
-    elseif self.flyoutTicker then
-        self.flyoutTicker:Hide()
-    end
-end
-
-function addon:UpdateUnlockHooks()
-    if self.unlockAllEnabled then
-        if not self:IsHooked(ItemUtil, "GetCraftingReagentCount") then
-            self:RawHook(ItemUtil, "GetCraftingReagentCount", "FakeReagentCount", true)
-        end
-        if ProfessionsUtil and ProfessionsUtil.GetReagentQuantityInPossession
-            and not self:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then
-            self:RawHook(ProfessionsUtil, "GetReagentQuantityInPossession", "FakeReagentQuantity", true)
-        end
-        if not self:IsHooked(C_Item, "GetItemCount") then
-            self:RawHook(C_Item, "GetItemCount", "FakeItemCount", true)
-        end
-        if not self:IsHooked(_G, "GetItemCount") then
-            self:RawHook(_G, "GetItemCount", "FakeLegacyItemCount", true)
-        end
-    else
-        if self:IsHooked(ItemUtil, "GetCraftingReagentCount") then
-            self:Unhook(ItemUtil, "GetCraftingReagentCount")
-        end
-        if ProfessionsUtil and self:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then
-            self:Unhook(ProfessionsUtil, "GetReagentQuantityInPossession")
-        end
-        if self:IsHooked(C_Item, "GetItemCount") then
-            self:Unhook(C_Item, "GetItemCount")
-        end
-        if self:IsHooked(_G, "GetItemCount") then
-            self:Unhook(_G, "GetItemCount")
-        end
-    end
-end
-
-function addon:RefreshReagentSlots()
-    if self._cmRefreshingReagents then return end
-    self._cmRefreshingReagents = true
-
-    local unlocked = self.unlockAllEnabled
-
-    local function processSlot(slot)
-        if not slot then return end
-        local button = slot.Button or slot
-        if not button then return end
-
-        if not button._cmHooked and button.Disable and button.Enable then
-            button._cmHooked = true
-            hooksecurefunc(button, "Disable", function(s)
-                if addon.unlockAllEnabled then
-                    s:Enable()
-                    if s.Icon and s.Icon.SetDesaturated then s.Icon:SetDesaturated(false) end
-                    if s.SlotBackground and s.SlotBackground.SetDesaturated then s.SlotBackground:SetDesaturated(false) end
-                end
-            end)
-        end
-
-        if unlocked then
-            if button.Enable then button:Enable() end
-            if type(button.count) == "number" then
-                button.count = 999
-                if button.Count and button.Count.SetTextColor then button.Count:SetTextColor(1, 1, 1) end
-                if button.Stock and button.Stock.SetTextColor then button.Stock:SetTextColor(1, 1, 1) end
-            end
-            if type(button.locked) == "boolean" then button.locked = false end
-            if button.Icon and button.Icon.SetDesaturated then button.Icon:SetDesaturated(false) end
-            if button.SlotBackground and button.SlotBackground.SetDesaturated then button.SlotBackground:SetDesaturated(false) end
-            if button.InputOverlay and button.InputOverlay.SetAlpha then button.InputOverlay:SetAlpha(1) end
-        end
-    end
-
-    local function refreshContainer(container)
-        if not container or not container:IsVisible() then return end
-        local n = container:GetNumChildren()
-        for i = 1, n do
-            local child = select(i, container:GetChildren())
-            if child then
-                processSlot(child)
-                if child.GetNumChildren then
-                    local m = child:GetNumChildren()
-                    for j = 1, m do
-                        processSlot(select(j, child:GetChildren()))
-                    end
-                end
-            end
-        end
-    end
-
-    local pf = ProfessionsFrame
-    local craftingForm = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
-    local ordersForm = pf and pf.OrdersPage and pf.OrdersPage.OrderView
-        and pf.OrdersPage.OrderView.OrderDetails and pf.OrdersPage.OrderView.OrderDetails.SchematicForm
-
-    if craftingForm then
-        refreshContainer(craftingForm.Reagents)
-        refreshContainer(craftingForm.OptionalReagents)
-        refreshContainer(craftingForm.FinishingReagents)
-    end
-    if ordersForm then
-        refreshContainer(ordersForm.Reagents)
-        refreshContainer(ordersForm.OptionalReagents)
-        refreshContainer(ordersForm.FinishingReagents)
-    end
-
-    self._cmRefreshingReagents = false
-end
-
 function addon:SetupReagentToggle(container)
     if _G.CMResultsList then _G.CMResultsList:Hide() end
     if not container then return end
@@ -433,18 +124,10 @@ function addon:SetupReagentToggle(container)
     else
         toggle:Hide()
     end
-
-    self:UpdateUnlockHooks()
-    C_Timer.After(0, function()
-        if addon and not InCombatLockdown() then
-            addon:RefreshReagentSlots()
-        end
-    end)
 end
 
 function addon:OnAllocationChange()
     if not self.orderForm or not self.orderForm.transaction then return end
-
     local currentAlloc = self.orderForm.transaction:CreateCraftingReagentInfoTbl()
     if not self.lastAllocation then self.lastAllocation = currentAlloc end
 
@@ -688,21 +371,19 @@ function addon:BuildReagentCheckbox(parent)
     checkbox:ClearAllPoints()
     checkbox:SetSize(20, 20)
     checkbox.text:SetText(LIGHTGRAY_FONT_COLOR:WrapTextInColorCode("Unlock All"))
-    checkbox:SetChecked(self.unlockAllEnabled)
+    checkbox:SetChecked(false)
     checkbox:Hide()
 
     function checkbox:Refresh()
         addon.unlockAllEnabled = self:GetChecked() and true or false
-        addon:UpdateUnlockHooks()
-        addon:SetFlyoutTickerEnabled(addon.unlockAllEnabled)
 
         if addon.unlockAllEnabled then
-            local sf = ProfessionsFrame.CraftingPage.SchematicForm
-            local best = sf and sf.AllocateBestQualityCheckbox
-            if best and best.GetChecked and not best:GetChecked() then
-                best:SetChecked(true)
-                local onClick = best.GetScript and best:GetScript("OnClick")
-                if onClick then pcall(onClick, best) end
+            if not addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then
+                addon:RawHook(ItemUtil, "GetCraftingReagentCount", "FakeReagentCount", true)
+            end
+        else
+            if addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then
+                addon:Unhook(ItemUtil, "GetCraftingReagentCount")
             end
         end
 
@@ -716,16 +397,23 @@ function addon:BuildReagentCheckbox(parent)
 
         local container = self:GetParent()
         if container then
-            addon:RefreshReagentSlots()
             local qDialog = container.QualityDialog
             if qDialog and qDialog.recipeID and qDialog.Setup then qDialog:Setup() end
         end
     end
 
     checkbox:SetScript("OnClick", function(self) self:Refresh() end)
-    checkbox:SetScript("OnHide", function() addon:UpdateUnlockHooks() end)
+    checkbox:SetScript("OnHide", function()
+        addon.unlockAllEnabled = false
+        if addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then
+            addon:Unhook(ItemUtil, "GetCraftingReagentCount")
+        end
+    end)
+
     return checkbox
 end
+
+function addon:FakeReagentCount() return 999 end
 
 function addon:GetUnlockedOperationInfo(details)
     if not self.unlockAllEnabled then return end
@@ -770,11 +458,6 @@ function addon:ShowSkillDetails(details)
         end
     end
 end
-
-function addon:FakeReagentCount() return 999 end
-function addon:FakeReagentQuantity() return 999 end
-function addon:FakeItemCount() return 999 end
-function addon:FakeLegacyItemCount() return 999 end
 
 function addon:FormatCrafterInfo(entry, hideName)
     local info = entry.info
