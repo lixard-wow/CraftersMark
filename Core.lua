@@ -544,6 +544,48 @@ function addon:DebugFlyout()
     if found == 0 then print("  No flyout frames found under ProfessionsFrame") end
     print(format("  MCRFlyoutMixin exists: %s", tostring(_G.MCRFlyoutMixin ~= nil)))
     print(format("  OrderMCRFlyoutMixin exists: %s", tostring(_G.OrderMCRFlyoutMixin ~= nil)))
+
+    -- Inspect buttons inside any open flyout ScrollTarget
+    local pf = ProfessionsFrame
+    local cf = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
+    if cf then
+        pcall(function()
+            for i = 1, cf:GetNumChildren() do
+                local child = select(i, cf:GetChildren())
+                local ok, hasBeh = pcall(function() return child.behavior ~= nil end)
+                if ok and hasBeh and child.ScrollBox then
+                    print("  ScrollBox fields:")
+                    for k, v in pairs(child.ScrollBox) do
+                        if type(v) ~= "function" then
+                            print(format("    ScrollBox.%s = %s", tostring(k), tostring(v))  )
+                        end
+                    end
+                    local target = child.ScrollBox.ScrollTarget
+                    if target then
+                        print(format("  ScrollTarget children: %d", target:GetNumChildren()))
+                        for j = 1, target:GetNumChildren() do
+                            local btn = select(j, target:GetChildren())
+                            if btn then
+                                local enabled = btn.IsEnabled and btn:IsEnabled()
+                                local desatIcon = btn.Icon and btn.Icon.GetDesaturated and btn.Icon:GetDesaturated()
+                                local hasOnClick = btn.GetScript and btn:GetScript("OnClick") ~= nil
+                                print(format("    btn[%d]: IsEnabled=%s desatIcon=%s hasOnClick=%s type=%s",
+                                    j, tostring(enabled), tostring(desatIcon), tostring(hasOnClick),
+                                    tostring(btn.GetObjectType and btn:GetObjectType())))
+                            end
+                        end
+                    else
+                        print("  ScrollTarget: NIL (field name may differ)")
+                        print("  Trying GetScrollTarget:")
+                        pcall(function()
+                            local st = child.ScrollBox:GetScrollTarget()
+                            print(format("  GetScrollTarget() children: %d", st and st:GetNumChildren() or -1))
+                        end)
+                    end
+                end
+            end
+        end)
+    end
 end
 
 -- Re-enable slot buttons that Blizzard grayed out before hooks were applied.
