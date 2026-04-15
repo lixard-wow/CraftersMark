@@ -129,6 +129,10 @@ function addon:SetupReagentToggle(container)
     else
         toggle:Hide()
     end
+
+    if self.unlockAllEnabled then
+        self:PatchVisibleFlyouts()
+    end
 end
 
 function addon:OnAllocationChange()
@@ -407,22 +411,32 @@ function addon:PatchFlyoutInstance(flyout)
     end
 end
 
--- Walk visible frames under root looking for flyout frames to patch.
--- Stops recursing once a flyout is found to avoid patching its ScrollBox children.
-function addon:PatchVisibleFlyouts(root, depth)
-    if not root or (depth or 0) > 8 then return end
-    local ok, hasBehavior = pcall(function() return root.behavior ~= nil end)
-    if ok and hasBehavior then
-        self:PatchFlyoutInstance(root)
-        return -- don't recurse into flyout internals
-    end
-    local ok2, n = pcall(function() return root.GetNumChildren and root:GetNumChildren() end)
-    if ok2 and n and n > 0 then
+-- Scan direct children of the schematic forms for flyout frames.
+-- The flyout is always a direct child of SchematicForm, so a shallow
+-- scan is enough and avoids accidentally patching unrelated frames.
+function addon:PatchVisibleFlyouts()
+    local function scanChildren(parent)
+        if not parent then return end
+        local ok, n = pcall(function() return parent:GetNumChildren() end)
+        if not ok or not n then return end
         for i = 1, n do
-            local ok3, child = pcall(function() return select(i, root:GetChildren()) end)
-            if ok3 then self:PatchVisibleFlyouts(child, (depth or 0) + 1) end
+            local ok2, child = pcall(function() return select(i, parent:GetChildren()) end)
+            if ok2 and child then
+                local ok3, hasBehavior = pcall(function() return child.behavior ~= nil end)
+                if ok3 and hasBehavior then
+                    self:PatchFlyoutInstance(child)
+                end
+            end
         end
     end
+
+    local pf = ProfessionsFrame
+    local cf = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
+    local of = pf and pf.OrdersPage and pf.OrdersPage.OrderView
+        and pf.OrdersPage.OrderView.OrderDetails
+        and pf.OrdersPage.OrderView.OrderDetails.SchematicForm
+    scanChildren(cf)
+    scanChildren(of)
 end
 
 -- Dump flyout state for debugging. Run: /cm debug
