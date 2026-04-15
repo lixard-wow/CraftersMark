@@ -448,6 +448,17 @@ function addon:EnableFlyoutButtons(flyout)
         for i = 1, target:GetNumChildren() do
             local child = select(i, target:GetChildren())
             if child then
+                -- Hook Disable so re-renders can't gray the button back out
+                if not child._cmFlyoutHooked and child.Disable then
+                    child._cmFlyoutHooked = true
+                    hooksecurefunc(child, "Disable", function(s)
+                        if addon.unlockAllEnabled then
+                            s:Enable()
+                            if s.Icon then s.Icon:SetDesaturated(false) end
+                            if s.SlotBackground then s.SlotBackground:SetDesaturated(false) end
+                        end
+                    end)
+                end
                 if child.Enable then child:Enable() end
                 if child.Icon then child.Icon:SetDesaturated(false) end
                 if child.SlotBackground then child.SlotBackground:SetDesaturated(false) end
