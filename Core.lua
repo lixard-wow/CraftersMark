@@ -365,6 +365,21 @@ function addon:ShowResultsList(anchor)
 end
 
 function addon:ApplyFlyoutOverrides()
+    -- Fake item counts so crests/sparks appear as available in the flyout
+    if not self:IsHooked(ItemUtil, "GetCraftingReagentCount") then
+        self:RawHook(ItemUtil, "GetCraftingReagentCount", "FakeReagentCount", true)
+    end
+    if ProfessionsUtil and ProfessionsUtil.GetReagentQuantityInPossession
+        and not self:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then
+        self:RawHook(ProfessionsUtil, "GetReagentQuantityInPossession", "FakeReagentCount", true)
+    end
+    if not self:IsHooked(C_Item, "GetItemCount") then
+        self:RawHook(C_Item, "GetItemCount", "FakeReagentCount", true)
+    end
+    if not self:IsHooked(_G, "GetItemCount") then
+        self:RawHook(_G, "GetItemCount", "FakeReagentCount", true)
+    end
+
     -- Hook C_TradeSkillUI.GetHideUnownedFlags — controls whether unowned
     -- items (crests, sparks) are shown in the reagent flyout picker
     if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags
@@ -416,13 +431,6 @@ function addon:BuildReagentCheckbox(parent)
 
         if addon.unlockAllEnabled then
             addon:ApplyFlyoutOverrides()
-            if not addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then
-                addon:RawHook(ItemUtil, "GetCraftingReagentCount", "FakeReagentCount", true)
-            end
-        else
-            if addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then
-                addon:Unhook(ItemUtil, "GetCraftingReagentCount")
-            end
         end
 
         if ProfessionsFrame.OrdersPage.OrderView:IsVisible() then
@@ -443,9 +451,10 @@ function addon:BuildReagentCheckbox(parent)
     checkbox:SetScript("OnClick", function(self) self:Refresh() end)
     checkbox:SetScript("OnHide", function()
         addon.unlockAllEnabled = false
-        if addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then
-            addon:Unhook(ItemUtil, "GetCraftingReagentCount")
-        end
+        if addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then addon:Unhook(ItemUtil, "GetCraftingReagentCount") end
+        if ProfessionsUtil and addon:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then addon:Unhook(ProfessionsUtil, "GetReagentQuantityInPossession") end
+        if addon:IsHooked(C_Item, "GetItemCount") then addon:Unhook(C_Item, "GetItemCount") end
+        if addon:IsHooked(_G, "GetItemCount") then addon:Unhook(_G, "GetItemCount") end
     end)
 
     return checkbox
