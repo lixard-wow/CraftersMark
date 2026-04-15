@@ -1,0 +1,834 @@
+---@diagnostic disable: undefined-global, undefined-field, redundant-parameter, missing-parameter, need-check-nil
+if InCombatLockdown() then return end
+
+CraftersMark = LibStub("AceAddon-3.0"):NewAddon("CraftersMark", "AceComm-3.0", "AceHook-3.0")
+
+local Serializer = LibStub("LibSerialize")
+local Compressor = LibStub("LibDeflate")
+local COMM_PREFIX = "CM_CrafterQuery"
+local CHANNEL_NAME = "CrafterNetwork"
+
+local addon = CraftersMark
+addon.settings = aura_env and aura_env.config or {delay = 30}
+addon.unlockAllEnabled = false
+
+function addon:OnInitialize()
+    if self.ready then return end
+    self.ready = true
+    self:RegisterComm(COMM_PREFIX)
+    self.resultsProvider = CreateDataProvider()
+
+    C_AddOns.LoadAddOn("Blizzard_ProfessionsCustomerOrders")
+    C_AddOns.LoadAddOn("Blizzard_Professions")
+    C_AddOns.LoadAddOn("Blizzard_AuctionHouseUI")
+
+    C_Timer.After(tonumber(self.settings.delay) or 30, function()
+        self:SetupChannel()
+    end)
+
+    self.orderForm = ProfessionsCustomerOrdersFrame.Form
+
+    self:SecureHookScript(self.orderForm, "OnShow")
+    self:SecureHookScript(self.orderForm, "OnHide")
+    self:SecureHookScript(self.orderForm.OrderRecipientTarget, "OnEditFocusLost", "UpdateTargetCrafter")
+    self:SecureHookScript(self.orderForm.OrderRecipientTarget, "OnShow", "UpdateTargetCrafter")
+    self:SecureHookScript(self.orderForm.OrderRecipientTarget, "OnHide", "RefreshQualityDisplay")
+    self:SecureHookScript(self.orderForm.ReagentContainer.Reagents, "OnShow", "SetupReagentToggle")
+    self:SecureHookScript(self.orderForm.ReagentContainer.Reagents, "OnHide", "SetupReagentToggle")
+
+    self:SecureHookScript(ProfessionsFrame, "OnShow", "CreateOrdersAccess")
+    self:SecureHookScript(AuctionHouseFrame.TitleContainer, "OnShow", "CreateOrdersAccess")
+
+    local cf = ProfessionsFrame.CraftingPage.SchematicForm
+    local of = ProfessionsFrame.OrdersPage.OrderView.OrderDetails.SchematicForm
+    self:SecureHookScript(cf.Reagents, "OnShow", "SetupReagentToggle")
+    self:SecureHookScript(cf.Reagents, "OnHide", "SetupReagentToggle")
+    self:SecureHookScript(cf.FinishingReagents, "OnShow", "SetupReagentToggle")
+    self:SecureHookScript(cf.FinishingReagents, "OnHide", "SetupReagentToggle")
+    self:SecureHookScript(of.Reagents, "OnShow", "SetupReagentToggle")
+    self:SecureHookScript(of.Reagents, "OnHide", "SetupReagentToggle")
+    self:SecureHookScript(of.FinishingReagents, "OnShow", "SetupReagentToggle")
+    self:SecureHookScript(of.FinishingReagents, "OnHide", "SetupReagentToggle")
+    self:SecureHookScript(cf.Details, "OnUpdate", "ShowSkillDetails")
+    self:SecureHookScript(of.Details, "OnUpdate", "ShowSkillDetails")
+
+    self:InstallFlyoutHooks()
+    self:PatchFlyoutBehaviorMixin()
+
+    print("|cff00ff00CraftersMark loaded|r")
+end
+
+function addon:PatchFlyoutBehaviorMixin()
+    local signature = {"GetElements", "IsElementEnabled", "GetUnownedFlags"}
+    for k, v in pairs(_G) do
+        if type(v) == "table" and type(k) == "string" then
+            local match = true
+            for i = 1, #signature do
+                if type(v[signature[i]]) ~= "function" then match = false; break end
+            end
+            if match then
+                self._flyoutMixin = v
+                break
+            end
+        end
+    end
+    local mx = self._flyoutMixin
+    if not mx then return end
+
+    local origGetElements = mx.GetElements
+    mx.GetElements = function(b, filterAvailable, ...)
+        if addon.unlockAllEnabled then filterAvailable = false end
+        return origGetElements(b, filterAvailable, ...)
+    end
+
+    local origEnabled = mx.IsElementEnabled
+    mx.IsElementEnabled = function(b, ed, c)
+        if addon.unlockAllEnabled then return true end
+        return origEnabled(b, ed, c)
+    end
+
+    local origValid = mx.IsElementValid
+    if type(origValid) == "function" then
+        mx.IsElementValid = function(b, ...)
+            if addon.unlockAllEnabled then return true end
+            return origValid(b, ...)
+        end
+    end
+
+    local origUnowned = mx.GetUnownedFlags
+    mx.GetUnownedFlags = function(b, ...)
+        if addon.unlockAllEnabled then
+            return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
+        end
+        return origUnowned(b, ...)
+    end
+end
+
+function addon:InstallFlyoutHooks()
+    if _G.MCRFlyoutMixin and not self:IsHooked(_G.MCRFlyoutMixin, "IsElementEnabled") then
+        local orig = _G.MCRFlyoutMixin.IsElementEnabled
+        self:RawHook(_G.MCRFlyoutMixin, "IsElementEnabled", function(b, ed, c)
+            if addon.unlockAllEnabled then return true end
+            return orig(b, ed, c)
+        end, true)
+    end
+
+    if _G.OrderMCRFlyoutMixin and not self:IsHooked(_G.OrderMCRFlyoutMixin, "IsElementEnabled") then
+        local orig = _G.OrderMCRFlyoutMixin.IsElementEnabled
+        self:RawHook(_G.OrderMCRFlyoutMixin, "IsElementEnabled", function(b, ed, c)
+            if addon.unlockAllEnabled then return true end
+            return orig(b, ed, c)
+        end, true)
+    end
+
+    if _G.Professions and _G.Professions.GenerateItemsFromEligibleItemSlots
+        and not self:IsHooked(_G.Professions, "GenerateItemsFromEligibleItemSlots") then
+        local orig = _G.Professions.GenerateItemsFromEligibleItemSlots
+        self:RawHook(_G.Professions, "GenerateItemsFromEligibleItemSlots", function(r, fa)
+            if addon.unlockAllEnabled then return orig(r, false) end
+            return orig(r, fa)
+        end, true)
+    end
+
+    if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags
+        and not self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then
+        local orig = C_TradeSkillUI.GetHideUnownedFlags
+        self:RawHook(C_TradeSkillUI, "GetHideUnownedFlags", function(r)
+            if addon.unlockAllEnabled then
+                return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
+            end
+            return orig(r)
+        end, true)
+    end
+end
+
+function addon:SetupChannel()
+    self.channelIndex = GetChannelName(CHANNEL_NAME)
+    if self.channelIndex == 0 then
+        JoinPermanentChannel(CHANNEL_NAME, nil, nil, false)
+        self.channelIndex = GetChannelName(CHANNEL_NAME)
+    end
+end
+
+function addon:OnShow()
+    self.resultsProvider = CreateDataProvider()
+    self.chosenCrafter = nil
+    self.lastAllocation = nil
+    self.allocationTimer = nil
+
+    self:BuildSearchButton()
+    self:SetupReagentToggle(self.orderForm.ReagentContainer)
+    self:RefreshQualityDisplay()
+
+    EventRegistry:RegisterCallback("Professions.AllocationUpdated", function(...) self:OnAllocationChange(...) end, self)
+end
+
+function addon:OnHide()
+    EventRegistry:UnregisterCallback("Professions.AllocationUpdated", self)
+end
+
+function addon:CreateOrdersAccess(parent)
+    local frameName = 'CMOrderBtn' .. (parent:GetName() or parent:GetParent():GetName() or "Main")
+    local button = _G[frameName] or CreateFrame("Button", frameName, parent, "UIPanelButtonTemplate")
+    button:SetFrameLevel(600)
+    button:ClearAllPoints()
+    button:SetSize(24, 24)
+    button:SetText("O")
+
+    if AuctionHouseFrame and parent == AuctionHouseFrame.TitleContainer then
+        button:SetPoint("TOPLEFT", 10, 1)
+    else
+        button:SetPoint("TOPLEFT", 90, 1)
+    end
+
+    if not button.ordersFrame then
+        local frame = ProfessionsCustomerOrdersFrame
+        frame:SetMovable(true)
+        frame:SetClampedToScreen(true)
+        frame.ignoreFramePositionManager = true
+        frame:RegisterForDrag("LeftButton")
+        frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
+        frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+        button.ordersFrame = frame
+    end
+
+    button:SetScript("OnClick", function(self) self.ordersFrame:Show() end)
+end
+
+function addon:PatchFlyoutFrame(flyout)
+    if not flyout then return end
+
+    if not flyout._cmOnShowHooked then
+        flyout._cmOnShowHooked = true
+        flyout:HookScript("OnShow", function(f) addon:PatchFlyoutFrame(f) end)
+    end
+
+    local behavior = flyout.behavior
+    if behavior and not behavior._cmPatched then
+        behavior._cmPatched = true
+
+        local origEnabled = behavior.IsElementEnabled
+        behavior.IsElementEnabled = function(b, ed, c)
+            if addon.unlockAllEnabled then return true end
+            if origEnabled then return origEnabled(b, ed, c) end
+            return false
+        end
+
+        local origValid = behavior.IsElementValid
+        if type(origValid) == "function" then
+            behavior.IsElementValid = function(b, ...)
+                if addon.unlockAllEnabled then return true end
+                return origValid(b, ...)
+            end
+        end
+
+        local origUnowned = behavior.GetUnownedFlags
+        if type(origUnowned) == "function" then
+            behavior.GetUnownedFlags = function(b, ...)
+                if addon.unlockAllEnabled then
+                    return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
+                end
+                return origUnowned(b, ...)
+            end
+        end
+
+        local origGetElements = behavior.GetElements
+        if type(origGetElements) == "function" then
+            behavior.GetElements = function(b, fa, ...)
+                if addon.unlockAllEnabled then fa = false end
+                return origGetElements(b, fa, ...)
+            end
+        end
+    end
+
+    local cb = flyout.HideUnownedCheckbox
+    if cb and cb.GetChecked and cb:GetChecked() then
+        cb:SetChecked(false)
+    end
+
+    if not addon._flyoutMixin and behavior and flyout._cmLastBehavior ~= behavior then
+        flyout._cmLastBehavior = behavior
+        local origPlaySound = PlaySound
+        PlaySound = function() end
+        if type(flyout.InitializeContents) == "function" then
+            pcall(flyout.InitializeContents, flyout)
+        elseif type(flyout.Init) == "function" then
+            pcall(flyout.Init, flyout)
+        end
+        PlaySound = origPlaySound
+    end
+end
+
+function addon:ForceFlyoutEntries()
+    if not self.unlockAllEnabled or not ProfessionsFrame then return end
+
+    local function walk(frame, depth)
+        if not frame or depth > 10 then return end
+        if frame.IsVisible and not frame:IsVisible() then return end
+
+        if frame.behavior and frame.HideUnownedCheckbox then
+            addon:PatchFlyoutFrame(frame)
+        end
+
+        if frame.GetObjectType and frame:GetObjectType() == "Button"
+            and type(frame.enabled) == "boolean"
+            and type(frame.count) == "number" then
+            frame.enabled = true
+            if frame.count < 999 then frame.count = 999 end
+            if frame.Enable then frame:Enable() end
+            if frame.Icon and frame.Icon.SetDesaturated then
+                frame.Icon:SetDesaturated(false)
+            end
+            if frame.Count and frame.Count.SetText then
+                frame.Count:SetText("999")
+                frame.Count:Show()
+            end
+        end
+
+        if frame.GetNumChildren then
+            local n = frame:GetNumChildren()
+            for i = 1, n do
+                walk(select(i, frame:GetChildren()), depth + 1)
+            end
+        end
+    end
+
+    walk(ProfessionsFrame, 0)
+end
+
+function addon:SetFlyoutTickerEnabled(on)
+    if on then
+        if not self.flyoutTicker then
+            self.flyoutTicker = CreateFrame("Frame")
+            self.flyoutTicker.elapsed = 0
+            self.flyoutTicker:SetScript("OnUpdate", function(t, dt)
+                t.elapsed = t.elapsed + dt
+                if t.elapsed < 0.15 then return end
+                t.elapsed = 0
+                addon:ForceFlyoutEntries()
+            end)
+        end
+        self.flyoutTicker:Show()
+    elseif self.flyoutTicker then
+        self.flyoutTicker:Hide()
+    end
+end
+
+function addon:UpdateUnlockHooks()
+    if self.unlockAllEnabled then
+        if not self:IsHooked(ItemUtil, "GetCraftingReagentCount") then
+            self:RawHook(ItemUtil, "GetCraftingReagentCount", "FakeReagentCount", true)
+        end
+        if ProfessionsUtil and ProfessionsUtil.GetReagentQuantityInPossession
+            and not self:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then
+            self:RawHook(ProfessionsUtil, "GetReagentQuantityInPossession", "FakeReagentQuantity", true)
+        end
+        if not self:IsHooked(C_Item, "GetItemCount") then
+            self:RawHook(C_Item, "GetItemCount", "FakeItemCount", true)
+        end
+        if not self:IsHooked(_G, "GetItemCount") then
+            self:RawHook(_G, "GetItemCount", "FakeLegacyItemCount", true)
+        end
+    else
+        if self:IsHooked(ItemUtil, "GetCraftingReagentCount") then
+            self:Unhook(ItemUtil, "GetCraftingReagentCount")
+        end
+        if ProfessionsUtil and self:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then
+            self:Unhook(ProfessionsUtil, "GetReagentQuantityInPossession")
+        end
+        if self:IsHooked(C_Item, "GetItemCount") then
+            self:Unhook(C_Item, "GetItemCount")
+        end
+        if self:IsHooked(_G, "GetItemCount") then
+            self:Unhook(_G, "GetItemCount")
+        end
+    end
+end
+
+function addon:RefreshReagentSlots()
+    if self._cmRefreshingReagents then return end
+    self._cmRefreshingReagents = true
+
+    local unlocked = self.unlockAllEnabled
+
+    local function processSlot(slot)
+        if not slot then return end
+        local button = slot.Button or slot
+        if not button then return end
+
+        if not button._cmHooked and button.Disable and button.Enable then
+            button._cmHooked = true
+            hooksecurefunc(button, "Disable", function(s)
+                if addon.unlockAllEnabled then
+                    s:Enable()
+                    if s.Icon and s.Icon.SetDesaturated then s.Icon:SetDesaturated(false) end
+                    if s.SlotBackground and s.SlotBackground.SetDesaturated then s.SlotBackground:SetDesaturated(false) end
+                end
+            end)
+        end
+
+        if unlocked then
+            if button.Enable then button:Enable() end
+            if type(button.count) == "number" then
+                button.count = 999
+                if button.Count and button.Count.SetTextColor then button.Count:SetTextColor(1, 1, 1) end
+                if button.Stock and button.Stock.SetTextColor then button.Stock:SetTextColor(1, 1, 1) end
+            end
+            if type(button.locked) == "boolean" then button.locked = false end
+            if button.Icon and button.Icon.SetDesaturated then button.Icon:SetDesaturated(false) end
+            if button.SlotBackground and button.SlotBackground.SetDesaturated then button.SlotBackground:SetDesaturated(false) end
+            if button.InputOverlay and button.InputOverlay.SetAlpha then button.InputOverlay:SetAlpha(1) end
+        end
+    end
+
+    local function refreshContainer(container)
+        if not container or not container:IsVisible() then return end
+        local n = container:GetNumChildren()
+        for i = 1, n do
+            local child = select(i, container:GetChildren())
+            if child then
+                processSlot(child)
+                if child.GetNumChildren then
+                    local m = child:GetNumChildren()
+                    for j = 1, m do
+                        processSlot(select(j, child:GetChildren()))
+                    end
+                end
+            end
+        end
+    end
+
+    local pf = ProfessionsFrame
+    local craftingForm = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
+    local ordersForm = pf and pf.OrdersPage and pf.OrdersPage.OrderView
+        and pf.OrdersPage.OrderView.OrderDetails and pf.OrdersPage.OrderView.OrderDetails.SchematicForm
+
+    if craftingForm then
+        refreshContainer(craftingForm.Reagents)
+        refreshContainer(craftingForm.OptionalReagents)
+        refreshContainer(craftingForm.FinishingReagents)
+    end
+    if ordersForm then
+        refreshContainer(ordersForm.Reagents)
+        refreshContainer(ordersForm.OptionalReagents)
+        refreshContainer(ordersForm.FinishingReagents)
+    end
+
+    self._cmRefreshingReagents = false
+end
+
+function addon:SetupReagentToggle(container)
+    if _G.CMResultsList then _G.CMResultsList:Hide() end
+    if not container then return end
+
+    local toggle = container.ReagentUnlocker or self:BuildReagentCheckbox(container)
+    if not toggle then return end
+
+    toggle:ClearAllPoints()
+    toggle:SetChecked(self.unlockAllEnabled)
+
+    if container.Label and container.Label:IsVisible() then
+        toggle:SetPoint("LEFT", container.Label, "LEFT", container.Label:GetWrappedWidth(), 0)
+        toggle:Show()
+    else
+        toggle:Hide()
+    end
+
+    self:UpdateUnlockHooks()
+    C_Timer.After(0, function()
+        if addon and not InCombatLockdown() then
+            addon:RefreshReagentSlots()
+        end
+    end)
+end
+
+function addon:OnAllocationChange()
+    if not self.orderForm or not self.orderForm.transaction then return end
+
+    local currentAlloc = self.orderForm.transaction:CreateCraftingReagentInfoTbl()
+    if not self.lastAllocation then self.lastAllocation = currentAlloc end
+
+    if not self:TableEquals(currentAlloc, self.lastAllocation) then
+        self.lastAllocation = currentAlloc
+        if self.allocationTimer then self.allocationTimer:Cancel() end
+        self.allocationTimer = C_Timer.NewTimer(0.1, function()
+            self:UpdateTargetCrafter()
+        end)
+    end
+end
+
+function addon:SendMessage(payload, recipient)
+    local encoded = Compressor:EncodeForWoWAddonChannel(
+        Compressor:CompressDeflate(Serializer:Serialize(payload)))
+
+    if recipient and string.len(recipient) > 2 then
+        self:SendCommMessage(COMM_PREFIX, encoded, "WHISPER", recipient)
+    elseif self.channelIndex and payload.query and payload.query.recipeID then
+        self:SendCommMessage(COMM_PREFIX, encoded, "CHANNEL", self.channelIndex)
+    end
+end
+
+function addon:OnCommReceived(prefix, message, channel, sender)
+    local decoded = Compressor:DecodeForWoWAddonChannel(message)
+    if not decoded then return end
+    local decompressed = Compressor:DecompressDeflate(decoded)
+    if not decompressed then return end
+    local ok, payload = Serializer:Deserialize(decompressed)
+    if not ok then return end
+
+    if payload.reply and sender and string.len(sender) > 2 then
+        self:StoreResult({crafter = sender, info = payload.reply})
+        self:RefreshQualityDisplay()
+    end
+
+    if payload.query and payload.query.recipeID then
+        ProfessionsFrame.CraftingPage:OnLoad()
+        local known = C_TradeSkillUI.IsRecipeProfessionLearned(payload.query.recipeID)
+        local recipe = C_TradeSkillUI.GetRecipeInfo(payload.query.recipeID)
+
+        if known then
+            local crafting
+            if payload.query.isRecraft and C_TradeSkillUI.GetCraftingOperationInfoForRecraft then
+                crafting = C_TradeSkillUI.GetCraftingOperationInfoForRecraft(
+                    payload.query.recipeID, payload.query.reagents or {}, nil)
+            end
+            if not crafting or crafting.baseSkill == 0 then
+                crafting = C_TradeSkillUI.GetCraftingOperationInfo(
+                    payload.query.recipeID, payload.query.reagents or {})
+            end
+
+            if not crafting or crafting.baseSkill == 0 then return end
+            crafting.learned = (not recipe and "notloaded") or (not recipe.learned and "notlearned")
+            self:SendMessage({reply = crafting}, sender)
+        end
+    end
+end
+
+function addon:StoreResult(entry)
+    if not self.resultsProvider then self.resultsProvider = CreateDataProvider() end
+    self.resultsProvider:RemoveByPredicate(function(el)
+        return el.crafter and entry.crafter and el.crafter == entry.crafter
+    end)
+    self.resultsProvider:Insert(entry)
+end
+
+function addon:UpdateTargetCrafter()
+    local target = self.orderForm.OrderRecipientTarget:GetText()
+    if target and string.len(target) > 3 then
+        self:RequestCrafterInfo(target)
+    end
+end
+
+function addon:RequestCrafterInfo(target)
+    local trans = self.orderForm.transaction
+    if not trans or not trans.recipeID then return end
+
+    local isRecraft = false
+    pcall(function() isRecraft = trans:GetRecraftItemGUID() ~= nil end)
+
+    self:SendMessage({
+        query = {
+            recipeID = trans.recipeID,
+            reagents = trans:CreateCraftingReagentInfoTbl() or {},
+            isRecraft = isRecraft,
+        }
+    }, target)
+end
+
+function addon:OnSearchClick(button, ...)
+    if self.channelIndex == 0 then
+        self:SetupChannel()
+    else
+        self.resultsProvider:Flush()
+        self:RequestCrafterInfo()
+        self:ShowResultsList(button)
+    end
+end
+
+function addon:ChooseCrafter(entry)
+    self.chosenCrafter = entry
+    if self.orderForm and self.orderForm.OrderRecipientTarget then
+        self.orderForm.OrderRecipientTarget:SetText(entry.crafter)
+        self:RefreshQualityDisplay()
+    end
+end
+
+function addon:BuildSearchButton()
+    local form = self.orderForm
+    local button = _G.CMSearchButton or CreateFrame("Button", "CMSearchButton", form.OrderRecipientTarget, "UIPanelButtonTemplate")
+
+    button:SetSize(80, 22)
+    button:SetTextToFit("Find")
+    button:SetPoint("TOPRIGHT", form.OrderRecipientTarget, "TOPLEFT", -31, 0)
+    button:SetScript("OnClick", function(btn, ...) addon:OnSearchClick(btn, ...) end)
+    button:SetScript("OnUpdate", function(btn)
+        addon.channelIndex = GetChannelName(CHANNEL_NAME)
+        btn:SetTextToFit(addon.channelIndex == 0 and "Join" or "Find")
+    end)
+    self.searchButton = button
+end
+
+function addon:RefreshQualityDisplay()
+    local form = ProfessionsCustomerOrdersFrame.Form
+    if not form:IsVisible() or not form.transaction then return end
+
+    local recipeID = form.transaction.recipeID
+    local target = form.OrderRecipientTarget
+    local name = target and target:GetText()
+
+    if target and target:IsVisible() and name and recipeID and string.len(name) > 2 then
+        local function matches(el)
+            return el and el.crafter and el.info and name and recipeID
+                and el.crafter == name and el.info.recipeID == recipeID
+        end
+
+        local _, result = self.resultsProvider:FindByPredicate(matches)
+
+        if matches(result) then
+            form:SetMinimumQualityIndex(result.info.craftingQuality)
+            form:UpdateMinimumQuality()
+            form.MinimumQuality.Dropdown:Hide()
+
+            local label = form.MinimumQuality
+            label.Text:ClearAllPoints()
+            label.Text:SetPoint("RIGHT", label.Dropdown, "LEFT", -25, 0)
+
+            local display = _G.CMQualityDisplay or CreateFrame("Frame", "CMQualityDisplay", label)
+            display:ClearAllPoints()
+            display:SetPoint("LEFT", label.Text, "RIGHT", 0, 0)
+            display:SetSize(100, 40)
+            display:Show()
+
+            local qualityText = _G.CMQualityText or display:CreateFontString("CMQualityText", "ARTWORK", "GameFontNormal")
+            qualityText:ClearAllPoints()
+            qualityText:SetPoint("TOPLEFT", display, "TOPLEFT", 0, -8)
+            qualityText:SetText(self:FormatCrafterInfo(result, true))
+            qualityText:Show()
+
+            local skillText = _G.CMSkillText or display:CreateFontString("CMSkillText", "ARTWORK", "GameFontNormal")
+            skillText:SetText(format("Skill: %d/%d",
+                result.info.baseSkill + result.info.bonusSkill,
+                result.info.baseDifficulty + result.info.bonusDifficulty))
+            skillText:SetTextColor(GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b)
+            skillText:ClearAllPoints()
+            skillText:SetPoint("TOPLEFT", display, "TOPLEFT", 2, -32)
+            skillText:SetScale(0.7)
+            skillText:Show()
+            return
+        end
+    end
+
+    form:UpdateMinimumQualityAnchor()
+    form:UpdateMinimumQuality()
+    form.MinimumQuality.Dropdown:Show()
+    if _G.CMQualityDisplay then _G.CMQualityDisplay:Hide() end
+end
+
+function addon:ShowResultsList(anchor)
+    local list = _G.CMResultsList or CreateFrame("Frame", "CMResultsList", anchor:GetParent(), "TooltipBackdropTemplate")
+    local scrollBox = _G.CMResultsScrollBox or CreateFrame("Frame", "$parentScrollBox", list, "WowScrollBoxList")
+    local scrollBar = _G.CMResultsScrollBar or CreateFrame("EventFrame", "$parentScrollBar", list, "MinimalScrollBar")
+
+    list:SetFrameStrata("TOOLTIP")
+    list:SetPoint("TOPLEFT", anchor, "TOPRIGHT", 5, 0)
+    list:SetSize(250, 100)
+    list:RegisterEvent("GLOBAL_MOUSE_DOWN")
+    list:SetScript("OnEvent", function(self, event, ...)
+        if event == "GLOBAL_MOUSE_DOWN" then
+            local buttonName = ...
+            local isRight = buttonName == "RightButton"
+            local mouseFocus = GetMouseFocus()
+            if not isRight and DoesAncestryInclude(self.owner, mouseFocus) then return end
+            if isRight or (not DoesAncestryInclude(self, mouseFocus) and mouseFocus ~= self) then
+                self:Hide()
+            end
+        end
+    end)
+
+    scrollBox:SetPoint("TOPLEFT", 2, -4)
+    scrollBox:SetPoint("BOTTOMRIGHT", 2, 4)
+    scrollBar:SetPoint("TOPLEFT", scrollBox, "TOPRIGHT", 0, 0)
+    scrollBar:SetPoint("BOTTOMLEFT", scrollBox, "BOTTOMRIGHT", 0, 0)
+
+    local view = CreateScrollBoxListLinearView(4, 4, 4, 4)
+    view:SetElementExtent(20)
+    view:SetDataProvider(self.resultsProvider)
+
+    view:SetElementInitializer("Button", function(button, elementData)
+        if not button.setup then
+            button.setup = true
+            button.label = button:CreateFontString(nil, "OVERLAY", "GameTooltipText")
+            button.label:SetPoint("LEFT", 4, 0)
+            button.label:SetFontObject("GameFontNormal")
+            button.label:SetTextColor(1, 1, 1)
+            button:SetHighlightTexture("auctionhouse-ui-row-highlight")
+            button:GetHighlightTexture():SetBlendMode("ADD")
+            button:GetHighlightTexture():SetAllPoints()
+            button:SetScript("OnClick", function(btn) list:SelectEntry(btn.elementData) end)
+        end
+        button.label:SetText(addon:FormatCrafterInfo(elementData))
+        button.elementData = elementData
+    end)
+    ScrollUtil.InitScrollBoxWithScrollBar(scrollBox, scrollBar, view)
+
+    list.addon = self
+    list.owner = anchor
+    function list:SelectEntry(...)
+        self.addon:ChooseCrafter(...)
+        self:Hide()
+    end
+
+    list:Show()
+end
+
+function addon:BuildReagentCheckbox(parent)
+    if not parent then return end
+    local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    parent.ReagentUnlocker = checkbox
+    checkbox:ClearAllPoints()
+    checkbox:SetSize(20, 20)
+    checkbox.text:SetText(LIGHTGRAY_FONT_COLOR:WrapTextInColorCode("Unlock All"))
+    checkbox:SetChecked(self.unlockAllEnabled)
+    checkbox:Hide()
+
+    function checkbox:Refresh()
+        addon.unlockAllEnabled = self:GetChecked() and true or false
+        addon:UpdateUnlockHooks()
+        addon:SetFlyoutTickerEnabled(addon.unlockAllEnabled)
+
+        if addon.unlockAllEnabled then
+            local sf = ProfessionsFrame.CraftingPage.SchematicForm
+            local best = sf and sf.AllocateBestQualityCheckbox
+            if best and best.GetChecked and not best:GetChecked() then
+                best:SetChecked(true)
+                local onClick = best.GetScript and best:GetScript("OnClick")
+                if onClick then pcall(onClick, best) end
+            end
+        end
+
+        if ProfessionsFrame.OrdersPage.OrderView:IsVisible() then
+            ProfessionsFrame.OrdersPage.OrderView:OnEvent("BAG_UPDATE")
+        elseif ProfessionsCustomerOrdersFrame.Form:IsVisible() then
+            ProfessionsCustomerOrdersFrame.Form:OnEvent("BAG_UPDATE")
+        elseif ProfessionsFrame.CraftingPage.SchematicForm.UpdateAllSlots then
+            ProfessionsFrame.CraftingPage.SchematicForm:UpdateAllSlots()
+        end
+
+        local container = self:GetParent()
+        if container then
+            addon:RefreshReagentSlots()
+            local qDialog = container.QualityDialog
+            if qDialog and qDialog.recipeID and qDialog.Setup then qDialog:Setup() end
+        end
+    end
+
+    checkbox:SetScript("OnClick", function(self) self:Refresh() end)
+    checkbox:SetScript("OnHide", function() addon:UpdateUnlockHooks() end)
+    return checkbox
+end
+
+function addon:GetUnlockedOperationInfo(details)
+    if not self.unlockAllEnabled then return end
+
+    local form = details and details:GetParent()
+    local transaction = form and form.transaction
+    local recipeID = transaction and transaction.recipeID
+    if not recipeID or not transaction.CreateCraftingReagentInfoTbl then return end
+
+    local reagents = transaction:CreateCraftingReagentInfoTbl() or {}
+
+    local isRecraft = false
+    if transaction.IsRecraft then
+        pcall(function() isRecraft = transaction:IsRecraft() end)
+    end
+
+    local crafting
+    if isRecraft and C_TradeSkillUI.GetCraftingOperationInfoForRecraft then
+        local ok, result = pcall(C_TradeSkillUI.GetCraftingOperationInfoForRecraft, recipeID, reagents, nil)
+        if ok then crafting = result end
+    end
+    if not crafting or (crafting.baseSkill or 0) == 0 then
+        local ok, result = pcall(C_TradeSkillUI.GetCraftingOperationInfo, recipeID, reagents)
+        if ok then crafting = result end
+    end
+
+    if crafting and (crafting.baseSkill or 0) > 0 then return crafting end
+end
+
+function addon:ShowSkillDetails(details)
+    if not details or not details.operationInfo or not details.statLinePool then return end
+
+    local unlockedInfo = self:GetUnlockedOperationInfo(details)
+    local operationInfo = unlockedInfo or details.operationInfo
+
+    for line, _ in details.statLinePool:EnumerateActive() do
+        if line.LeftLabel:GetText() == PROFESSIONS_CRAFTING_STAT_TT_CRIT_HEADER then
+            local text = self:FormatInfoDetails(operationInfo)
+            if unlockedInfo then text = "|cffffcc00[+Crest]|r " .. (text or "") end
+            line.RightLabel:SetText(text)
+            break
+        end
+    end
+end
+
+function addon:FakeReagentCount() return 999 end
+function addon:FakeReagentQuantity() return 999 end
+function addon:FakeItemCount() return 999 end
+function addon:FakeLegacyItemCount() return 999 end
+
+function addon:FormatCrafterInfo(entry, hideName)
+    local info = entry.info
+    local display = info and self:FormatInfoDetails(info) or "|cFF999999???|r"
+    return entry.crafter and not hideName and format("%s - %s", entry.crafter, display) or display
+end
+
+function addon:FormatInfoDetails(info)
+    if not info then return end
+    if info.learned == "notloaded" then return "|cff999999not loaded|r" end
+    if info.learned == "notlearned" then return "|cffff0000not learned|r" end
+    if not info.isQualityCraft then return "|cff00ff00ok|r" end
+
+    local skill = info.baseSkill + info.bonusSkill
+    local percent, bonus
+
+    for _, stat in pairs(info.bonusStats) do
+        if stat.bonusStatName == PROFESSIONS_CRAFTING_STAT_TT_CRIT_HEADER then
+            percent, bonus = string.match(stat.ratingDescription, "([0-9]+%.?[0-9]+)%%[^0-9]+([0-9]+)")
+            break
+        end
+    end
+
+    if not (percent and bonus and skill) then return end
+
+    local threshold = skill - info.upperSkillTreshold + (skill < info.upperSkillTreshold and bonus or 0)
+    local baseQual = info.craftingQuality
+    local procQual = min(info.guaranteedCraftingQualityID <= 3 and 3 or 5, baseQual + (threshold >= 0 and 1 or 0))
+
+    local icon = format("|A:%s:16:16|a", Professions.GetIconForQuality(procQual, true))
+    local nextIcon = format("|A:%s:16:16|a", Professions.GetIconForQuality(min(5, procQual + 1), true))
+
+    local thresholdText = (threshold < 0 and format("(|cffff0000%d|r to %s)", threshold, nextIcon))
+        or (threshold >= 0 and format("(|cff00ff00+%d|r)", threshold))
+
+    return (baseQual == procQual and format("%s%s", icon, thresholdText))
+        or format("%.1f%% to %s%s", percent, icon, thresholdText)
+end
+
+function addon:TableEquals(t1, t2, ignoreMeta)
+    local ty1, ty2 = type(t1), type(t2)
+    if ty1 ~= ty2 then return false end
+    if ty1 ~= 'table' then return t1 == t2 end
+
+    local mt = getmetatable(t1)
+    if not ignoreMeta and mt and mt.__eq then return t1 == t2 end
+
+    for k, v in pairs(t1) do
+        if t2[k] == nil or not self:TableEquals(v, t2[k]) then return false end
+    end
+    for k, v in pairs(t2) do
+        if t1[k] == nil or not self:TableEquals(t1[k], v) then return false end
+    end
+    return true
+end
+
+CraftersMark:OnInitialize()
