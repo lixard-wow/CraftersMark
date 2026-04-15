@@ -402,13 +402,21 @@ function addon:PatchFlyoutInstance(flyout)
         end
     end
 
-    -- Force re-render and directly enable all buttons in the scroll target
-    pcall(function()
-        if flyout.ScrollBox and flyout.ScrollBox.FullUpdate then
-            flyout.ScrollBox:FullUpdate()
-        end
-        addon:EnableFlyoutButtons(flyout)
-    end)
+    -- Hook the ScrollBox's own OnUpdate so buttons are re-enabled after every render.
+    -- The Disable hook alone isn't enough because pool frames cycle in and out.
+    if flyout.ScrollBox and not flyout.ScrollBox._cmUpdateHooked then
+        flyout.ScrollBox._cmUpdateHooked = true
+        flyout.ScrollBox:HookScript("OnUpdate", function(sb, dt)
+            sb._cmElapsed = (sb._cmElapsed or 0) + dt
+            if sb._cmElapsed < 0.05 then return end
+            sb._cmElapsed = 0
+            if addon.unlockAllEnabled then
+                pcall(function() addon:EnableFlyoutButtons(flyout) end)
+            end
+        end)
+    end
+
+    pcall(function() addon:EnableFlyoutButtons(flyout) end)
 end
 
 -- Scan direct children of the schematic forms for open flyout frames and patch them.
