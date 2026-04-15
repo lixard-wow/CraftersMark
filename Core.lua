@@ -130,9 +130,6 @@ function addon:SetupReagentToggle(container)
         toggle:Hide()
     end
 
-    if self.unlockAllEnabled then
-        self:PatchVisibleFlyouts()
-    end
 end
 
 function addon:OnAllocationChange()
@@ -411,9 +408,7 @@ function addon:PatchFlyoutInstance(flyout)
     end
 end
 
--- Scan direct children of the schematic forms for flyout frames.
--- The flyout is always a direct child of SchematicForm, so a shallow
--- scan is enough and avoids accidentally patching unrelated frames.
+-- Scan direct children of the schematic forms for open flyout frames and patch them.
 function addon:PatchVisibleFlyouts()
     local function scanChildren(parent)
         if not parent then return end
@@ -437,6 +432,26 @@ function addon:PatchVisibleFlyouts()
         and pf.OrdersPage.OrderView.OrderDetails.SchematicForm
     scanChildren(cf)
     scanChildren(of)
+end
+
+-- Lightweight watcher: patches flyouts as they open while unlock is active.
+-- Runs every 0.1s but only scans direct SchematicForm children so it's cheap.
+function addon:SetFlyoutWatcher(enabled)
+    if not self._flyoutWatcher then
+        self._flyoutWatcher = CreateFrame("Frame")
+        self._flyoutWatcher.elapsed = 0
+        self._flyoutWatcher:SetScript("OnUpdate", function(f, dt)
+            f.elapsed = f.elapsed + dt
+            if f.elapsed < 0.1 then return end
+            f.elapsed = 0
+            addon:PatchVisibleFlyouts()
+        end)
+    end
+    if enabled then
+        self._flyoutWatcher:Show()
+    else
+        self._flyoutWatcher:Hide()
+    end
 end
 
 -- Dump flyout state for debugging. Run: /cm debug
@@ -569,9 +584,6 @@ function addon:ApplyFlyoutOverrides()
         end, true)
     end
 
-    -- Patch any flyout instances already open
-    self:PatchVisibleFlyouts(ProfessionsFrame)
-
     -- Re-enable any slot buttons already drawn with grayed state
     self:RefreshReagentSlots()
 end
@@ -591,6 +603,9 @@ function addon:BuildReagentCheckbox(parent)
 
         if addon.unlockAllEnabled then
             addon:ApplyFlyoutOverrides()
+            addon:SetFlyoutWatcher(true)
+        else
+            addon:SetFlyoutWatcher(false)
         end
 
         if ProfessionsFrame.OrdersPage.OrderView:IsVisible() then
@@ -616,6 +631,7 @@ function addon:BuildReagentCheckbox(parent)
         if addon:IsHooked(C_Item, "GetItemCount") then addon:Unhook(C_Item, "GetItemCount") end
         if addon:IsHooked(_G, "GetItemCount") then addon:Unhook(_G, "GetItemCount") end
         if C_TradeSkillUI and addon:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then addon:Unhook(C_TradeSkillUI, "GetHideUnownedFlags") end
+        addon:SetFlyoutWatcher(false)
         -- per-instance behavior patches remain but unlockAllEnabled=false makes them pass through
     end)
 
