@@ -370,11 +370,13 @@ function addon:ApplyFlyoutOverrides()
     local signature = {"GetElements", "IsElementEnabled", "GetUnownedFlags"}
     for _, v in pairs(_G) do
         if type(v) == "table" then
-            local match = true
-            for _, fn in ipairs(signature) do
-                if type(v[fn]) ~= "function" then match = false; break end
-            end
-            if match then
+            local ok, match = pcall(function()
+                for _, fn in ipairs(signature) do
+                    if type(v[fn]) ~= "function" then return false end
+                end
+                return true
+            end)
+            if ok and match then
                 local orig_enabled = v.IsElementEnabled
                 v.IsElementEnabled = function(b, ed, c)
                     if addon.unlockAllEnabled then return true end
