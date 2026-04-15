@@ -52,6 +52,11 @@ function addon:OnInitialize()
     self:SecureHookScript(cf.Details, "OnUpdate", "ShowSkillDetails")
     self:SecureHookScript(of.Details, "OnUpdate", "ShowSkillDetails")
 
+    SLASH_CRAFTERSMARK1 = "/cm"
+    SlashCmdList["CRAFTERSMARK"] = function(msg)
+        if msg == "debug" then addon:DebugFlyout() end
+    end
+
     print("|cff00ff00CraftersMark loaded|r")
 end
 
@@ -408,14 +413,68 @@ end
 -- Walk visible frames under root looking for flyout frames to patch.
 function addon:PatchVisibleFlyouts(root, depth)
     if not root or (depth or 0) > 8 then return end
-    if root.behavior and root.HideUnownedCheckbox then
+    local ok, hasBehavior = pcall(function() return root.behavior and root.HideUnownedCheckbox end)
+    if ok and hasBehavior then
         self:PatchFlyoutInstance(root)
     end
-    if root.GetNumChildren then
-        for i = 1, root:GetNumChildren() do
-            self:PatchVisibleFlyouts(select(i, root:GetChildren()), (depth or 0) + 1)
+    local ok2, n = pcall(function() return root.GetNumChildren and root:GetNumChildren() end)
+    if ok2 and n and n > 0 then
+        for i = 1, n do
+            local ok3, child = pcall(function() return select(i, root:GetChildren()) end)
+            if ok3 then self:PatchVisibleFlyouts(child, (depth or 0) + 1) end
         end
     end
+end
+
+-- Dump flyout state for debugging. Run: /cm debug
+function addon:DebugFlyout()
+    print("|cff00ff00CraftersMark Debug|r")
+    print("unlockAllEnabled:", self.unlockAllEnabled)
+
+    -- Check count hooks
+    local testItemID = 213746 -- Runed Harbinger Crest
+    local craftCount = ItemUtil.GetCraftingReagentCount(testItemID)
+    local itemCount = C_Item.GetItemCount(testItemID)
+    local globalCount = GetItemCount(testItemID)
+    print(format("GetCraftingReagentCount(%d) = %s", testItemID, tostring(craftCount)))
+    print(format("C_Item.GetItemCount(%d) = %s", testItemID, tostring(itemCount)))
+    print(format("GetItemCount(%d) = %s", testItemID, tostring(globalCount)))
+
+    -- Check GetHideUnownedFlags
+    if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags then
+        local flags = C_TradeSkillUI.GetHideUnownedFlags()
+        print("GetHideUnownedFlags:", flags and ("alwaysShowUnavailable="..tostring(flags.alwaysShowUnavailable)) or "nil")
+    else
+        print("GetHideUnownedFlags: NOT FOUND")
+    end
+
+    -- Walk ProfessionsFrame for flyout frames
+    local found = 0
+    local function walk(frame, depth)
+        if not frame or depth > 10 then return end
+        local ok, hasBeh = pcall(function() return frame.behavior ~= nil end)
+        if ok and hasBeh then
+            found = found + 1
+            local name = frame:GetName() or frame:GetDebugName() or "unnamed"
+            local patched = frame.behavior._cmPatched and "YES" or "NO"
+            local enabled = "?"
+            pcall(function()
+                enabled = tostring(frame.behavior:IsElementEnabled({}, false))
+            end)
+            print(format("  Flyout[%d]: %s | patched=%s | IsElementEnabled=%s", found, name, patched, enabled))
+        end
+        local ok2, n = pcall(function() return frame.GetNumChildren and frame:GetNumChildren() or 0 end)
+        if ok2 and n > 0 then
+            for i = 1, n do
+                local ok3, child = pcall(function() return select(i, frame:GetChildren()) end)
+                if ok3 and child then walk(child, depth + 1) end
+            end
+        end
+    end
+    walk(ProfessionsFrame, 0)
+    if found == 0 then print("  No flyout frames found under ProfessionsFrame") end
+    print(format("  MCRFlyoutMixin exists: %s", tostring(_G.MCRFlyoutMixin ~= nil)))
+    print(format("  OrderMCRFlyoutMixin exists: %s", tostring(_G.OrderMCRFlyoutMixin ~= nil)))
 end
 
 -- Re-enable slot buttons that Blizzard grayed out before hooks were applied.
@@ -485,9 +544,6 @@ function addon:ApplyFlyoutOverrides()
     if not self:IsHooked(_G, "GetItemCount") then
         self:RawHook(_G, "GetItemCount", "FakeReagentCount", true)
     end
-
-    -- Patch any flyout instances already open under ProfessionsFrame
-    self:PatchVisibleFlyouts(ProfessionsFrame)
 
     -- Re-enable any slot buttons already drawn with grayed state
     self:RefreshReagentSlots()
