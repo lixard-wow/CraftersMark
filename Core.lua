@@ -364,6 +364,44 @@ function addon:ShowResultsList(anchor)
     list:Show()
 end
 
+function addon:ApplyFlyoutOverrides()
+    -- Find the shared flyout behavior mixin by signature and patch it once
+    if self._flyoutPatched then return end
+    local signature = {"GetElements", "IsElementEnabled", "GetUnownedFlags"}
+    for _, v in pairs(_G) do
+        if type(v) == "table" then
+            local match = true
+            for _, fn in ipairs(signature) do
+                if type(v[fn]) ~= "function" then match = false; break end
+            end
+            if match then
+                local orig_enabled = v.IsElementEnabled
+                v.IsElementEnabled = function(b, ed, c)
+                    if addon.unlockAllEnabled then return true end
+                    return orig_enabled(b, ed, c)
+                end
+
+                local orig_flags = v.GetUnownedFlags
+                v.GetUnownedFlags = function(b, ...)
+                    if addon.unlockAllEnabled then
+                        return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
+                    end
+                    return orig_flags(b, ...)
+                end
+
+                local orig_elements = v.GetElements
+                v.GetElements = function(b, filterAvailable, ...)
+                    if addon.unlockAllEnabled then filterAvailable = false end
+                    return orig_elements(b, filterAvailable, ...)
+                end
+
+                self._flyoutPatched = true
+                break
+            end
+        end
+    end
+end
+
 function addon:BuildReagentCheckbox(parent)
     if not parent then return end
     local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
@@ -378,6 +416,7 @@ function addon:BuildReagentCheckbox(parent)
         addon.unlockAllEnabled = self:GetChecked() and true or false
 
         if addon.unlockAllEnabled then
+            addon:ApplyFlyoutOverrides()
             if not addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then
                 addon:RawHook(ItemUtil, "GetCraftingReagentCount", "FakeReagentCount", true)
             end
