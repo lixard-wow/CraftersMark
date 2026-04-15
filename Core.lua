@@ -364,8 +364,114 @@ function addon:ShowResultsList(anchor)
     list:Show()
 end
 
+-- Patch a single flyout frame's per-instance behavior object.
+-- Mixins are copied by value in WoW, so hooking the mixin table is not
+-- enough — each flyout instance needs its own behavior patched directly.
+function addon:PatchFlyoutInstance(flyout)
+    if not flyout then return end
+
+    if not flyout._cmShowHooked then
+        flyout._cmShowHooked = true
+        flyout:HookScript("OnShow", function(f) addon:PatchFlyoutInstance(f) end)
+    end
+
+    local behavior = flyout.behavior
+    if not behavior or behavior._cmPatched then return end
+    behavior._cmPatched = true
+
+    local origEnabled = behavior.IsElementEnabled
+    behavior.IsElementEnabled = function(b, ed, c)
+        if addon.unlockAllEnabled then return true end
+        if origEnabled then return origEnabled(b, ed, c) end
+        return false
+    end
+
+    local origFlags = behavior.GetUnownedFlags
+    if type(origFlags) == "function" then
+        behavior.GetUnownedFlags = function(b, ...)
+            if addon.unlockAllEnabled then
+                return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
+            end
+            return origFlags(b, ...)
+        end
+    end
+
+    local origElements = behavior.GetElements
+    if type(origElements) == "function" then
+        behavior.GetElements = function(b, fa, ...)
+            if addon.unlockAllEnabled then fa = false end
+            return origElements(b, fa, ...)
+        end
+    end
+end
+
+-- Walk visible frames under root looking for flyout frames to patch.
+function addon:PatchVisibleFlyouts(root, depth)
+    if not root or (depth or 0) > 8 then return end
+    if root.behavior and root.HideUnownedCheckbox then
+        self:PatchFlyoutInstance(root)
+    end
+    if root.GetNumChildren then
+        for i = 1, root:GetNumChildren() do
+            self:PatchVisibleFlyouts(select(i, root:GetChildren()), (depth or 0) + 1)
+        end
+    end
+end
+
+-- Re-enable slot buttons that Blizzard grayed out before hooks were applied.
+function addon:RefreshReagentSlots()
+    local function processSlot(slot)
+        if not slot then return end
+        local btn = slot.Button or slot
+        if not btn then return end
+        if not btn._cmHooked and btn.Disable and btn.Enable then
+            btn._cmHooked = true
+            hooksecurefunc(btn, "Disable", function(s)
+                if addon.unlockAllEnabled then
+                    s:Enable()
+                    if s.Icon then s.Icon:SetDesaturated(false) end
+                    if s.SlotBackground then s.SlotBackground:SetDesaturated(false) end
+                end
+            end)
+        end
+        if addon.unlockAllEnabled then
+            if btn.Enable then btn:Enable() end
+            if btn.Icon then btn.Icon:SetDesaturated(false) end
+            if btn.SlotBackground then btn.SlotBackground:SetDesaturated(false) end
+        end
+    end
+
+    local function refreshContainer(container)
+        if not container or not container:IsVisible() then return end
+        for i = 1, container:GetNumChildren() do
+            local child = select(i, container:GetChildren())
+            processSlot(child)
+            if child and child.GetNumChildren then
+                for j = 1, child:GetNumChildren() do
+                    processSlot(select(j, child:GetChildren()))
+                end
+            end
+        end
+    end
+
+    local pf = ProfessionsFrame
+    local cf = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
+    local of = pf and pf.OrdersPage and pf.OrdersPage.OrderView
+        and pf.OrdersPage.OrderView.OrderDetails and pf.OrdersPage.OrderView.OrderDetails.SchematicForm
+    if cf then
+        refreshContainer(cf.Reagents)
+        refreshContainer(cf.OptionalReagents)
+        refreshContainer(cf.FinishingReagents)
+    end
+    if of then
+        refreshContainer(of.Reagents)
+        refreshContainer(of.OptionalReagents)
+        refreshContainer(of.FinishingReagents)
+    end
+end
+
 function addon:ApplyFlyoutOverrides()
-    -- Fake item counts so crests/sparks appear as available in the flyout
+    -- Fake item counts so crests/sparks show as available
     if not self:IsHooked(ItemUtil, "GetCraftingReagentCount") then
         self:RawHook(ItemUtil, "GetCraftingReagentCount", "FakeReagentCount", true)
     end
@@ -380,40 +486,11 @@ function addon:ApplyFlyoutOverrides()
         self:RawHook(_G, "GetItemCount", "FakeReagentCount", true)
     end
 
-    -- Hook C_TradeSkillUI.GetHideUnownedFlags — controls whether unowned
-    -- items (crests, sparks) are shown in the reagent flyout picker
-    if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags
-        and not self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then
-        self:RawHook(C_TradeSkillUI, "GetHideUnownedFlags", function()
-            if addon.unlockAllEnabled then
-                return {alwaysShowUnavailable = true, cannotModifyHideUnavailable = false}
-            end
-            return addon.hooks[C_TradeSkillUI]["GetHideUnownedFlags"]()
-        end, true)
-    end
+    -- Patch any flyout instances already open under ProfessionsFrame
+    self:PatchVisibleFlyouts(ProfessionsFrame)
 
-    -- Hook the named flyout mixins directly by global name
-    if _G.MCRFlyoutMixin and not self:IsHooked(_G.MCRFlyoutMixin, "IsElementEnabled") then
-        self:RawHook(_G.MCRFlyoutMixin, "IsElementEnabled", function(b, ed, c)
-            if addon.unlockAllEnabled then return true end
-            return addon.hooks[_G.MCRFlyoutMixin]["IsElementEnabled"](b, ed, c)
-        end, true)
-    end
-
-    if _G.OrderMCRFlyoutMixin and not self:IsHooked(_G.OrderMCRFlyoutMixin, "IsElementEnabled") then
-        self:RawHook(_G.OrderMCRFlyoutMixin, "IsElementEnabled", function(b, ed, c)
-            if addon.unlockAllEnabled then return true end
-            return addon.hooks[_G.OrderMCRFlyoutMixin]["IsElementEnabled"](b, ed, c)
-        end, true)
-    end
-
-    if _G.Professions and _G.Professions.GenerateItemsFromEligibleItemSlots
-        and not self:IsHooked(_G.Professions, "GenerateItemsFromEligibleItemSlots") then
-        self:RawHook(_G.Professions, "GenerateItemsFromEligibleItemSlots", function(r, fa)
-            if addon.unlockAllEnabled then return addon.hooks[_G.Professions]["GenerateItemsFromEligibleItemSlots"](r, false) end
-            return addon.hooks[_G.Professions]["GenerateItemsFromEligibleItemSlots"](r, fa)
-        end, true)
-    end
+    -- Re-enable any slot buttons already drawn with grayed state
+    self:RefreshReagentSlots()
 end
 
 function addon:BuildReagentCheckbox(parent)
@@ -455,6 +532,7 @@ function addon:BuildReagentCheckbox(parent)
         if ProfessionsUtil and addon:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then addon:Unhook(ProfessionsUtil, "GetReagentQuantityInPossession") end
         if addon:IsHooked(C_Item, "GetItemCount") then addon:Unhook(C_Item, "GetItemCount") end
         if addon:IsHooked(_G, "GetItemCount") then addon:Unhook(_G, "GetItemCount") end
+        -- per-instance behavior patches remain but unlockAllEnabled=false makes them pass through
     end)
 
     return checkbox
