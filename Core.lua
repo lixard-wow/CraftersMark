@@ -405,7 +405,7 @@ end
 -- Walk visible frames under root looking for flyout frames to patch.
 function addon:PatchVisibleFlyouts(root, depth)
     if not root or (depth or 0) > 8 then return end
-    local ok, hasBehavior = pcall(function() return root.behavior and root.HideUnownedCheckbox end)
+    local ok, hasBehavior = pcall(function() return root.behavior ~= nil end)
     if ok and hasBehavior then
         self:PatchFlyoutInstance(root)
     end
