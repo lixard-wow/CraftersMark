@@ -440,10 +440,11 @@ function addon:DebugFlyout()
     print(format("C_Item.GetItemCount(%d) = %s", testItemID, tostring(itemCount)))
     print(format("GetItemCount(%d) = %s", testItemID, tostring(globalCount)))
 
-    -- Check GetHideUnownedFlags
+    -- Check GetHideUnownedFlags (requires recipeID — use current form's if available)
     if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags then
-        local flags = C_TradeSkillUI.GetHideUnownedFlags()
-        print("GetHideUnownedFlags:", flags and ("alwaysShowUnavailable="..tostring(flags.alwaysShowUnavailable)) or "nil")
+        local recipeID = self.orderForm and self.orderForm.transaction and self.orderForm.transaction.recipeID or 0
+        local cannotModify, alwaysShow = C_TradeSkillUI.GetHideUnownedFlags(recipeID)
+        print(format("GetHideUnownedFlags(%d): cannotModify=%s alwaysShow=%s", recipeID, tostring(cannotModify), tostring(alwaysShow)))
     else
         print("GetHideUnownedFlags: NOT FOUND")
     end
@@ -545,6 +546,16 @@ function addon:ApplyFlyoutOverrides()
         self:RawHook(_G, "GetItemCount", "FakeReagentCount", true)
     end
 
+    -- GetHideUnownedFlags(recipeID) -> cannotModifyHideUnowned, alwaysShowUnowned
+    -- Return false, true so the flyout shows and allows selecting unowned items
+    if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags
+        and not self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then
+        self:RawHook(C_TradeSkillUI, "GetHideUnownedFlags", function(recipeID)
+            if addon.unlockAllEnabled then return false, true end
+            return addon.hooks[C_TradeSkillUI]["GetHideUnownedFlags"](recipeID)
+        end, true)
+    end
+
     -- Re-enable any slot buttons already drawn with grayed state
     self:RefreshReagentSlots()
 end
@@ -588,6 +599,7 @@ function addon:BuildReagentCheckbox(parent)
         if ProfessionsUtil and addon:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then addon:Unhook(ProfessionsUtil, "GetReagentQuantityInPossession") end
         if addon:IsHooked(C_Item, "GetItemCount") then addon:Unhook(C_Item, "GetItemCount") end
         if addon:IsHooked(_G, "GetItemCount") then addon:Unhook(_G, "GetItemCount") end
+        if C_TradeSkillUI and addon:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then addon:Unhook(C_TradeSkillUI, "GetHideUnownedFlags") end
         -- per-instance behavior patches remain but unlockAllEnabled=false makes them pass through
     end)
 
