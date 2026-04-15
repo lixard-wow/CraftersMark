@@ -400,14 +400,21 @@ function addon:PatchFlyoutInstance(flyout)
             return origFlags(b, ...)
         end
     end
+
+    -- Force the ScrollBox to re-render items with the new IsElementEnabled result
+    if flyout.ScrollBox and flyout.ScrollBox.FullUpdate then
+        pcall(function() flyout.ScrollBox:FullUpdate() end)
+    end
 end
 
 -- Walk visible frames under root looking for flyout frames to patch.
+-- Stops recursing once a flyout is found to avoid patching its ScrollBox children.
 function addon:PatchVisibleFlyouts(root, depth)
     if not root or (depth or 0) > 8 then return end
     local ok, hasBehavior = pcall(function() return root.behavior ~= nil end)
     if ok and hasBehavior then
         self:PatchFlyoutInstance(root)
+        return -- don't recurse into flyout internals
     end
     local ok2, n = pcall(function() return root.GetNumChildren and root:GetNumChildren() end)
     if ok2 and n and n > 0 then
