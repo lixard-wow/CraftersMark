@@ -470,6 +470,17 @@ function addon:EnableFlyoutButtons(flyout)
                 if child.Enable then child:Enable() end
                 if child.Icon then child.Icon:SetDesaturated(false) end
                 if child.SlotBackground then child.SlotBackground:SetDesaturated(false) end
+                -- Update cached elementData enabled fields so OnClick doesn't bail out
+                pcall(function()
+                    local ed = child.elementData
+                    if ed then
+                        if ed.enabled ~= nil then ed.enabled = true end
+                        if ed.isOwned ~= nil then ed.isOwned = true end
+                        if ed.available ~= nil then ed.available = true end
+                        if ed.isAvailable ~= nil then ed.isAvailable = true end
+                        if ed.hasCount ~= nil then ed.hasCount = true end
+                    end
+                end)
             end
         end
     end)
@@ -591,6 +602,19 @@ function addon:DebugFlyout()
                                 print(format("    btn[%d]: IsEnabled=%s desatIcon=%s hasOnClick=%s type=%s",
                                     j, tostring(enabled), tostring(desatIcon), tostring(hasOnClick),
                                     tostring(btn.GetObjectType and btn:GetObjectType())))
+                                -- Print elementData fields to find what OnClick checks
+                                pcall(function()
+                                    local ed = btn.elementData
+                                    if ed then
+                                        for k, v in pairs(ed) do
+                                            if type(v) ~= "function" and type(v) ~= "table" then
+                                                print(format("      ed.%s = %s", tostring(k), tostring(v)))
+                                            end
+                                        end
+                                    else
+                                        print("      elementData: nil")
+                                    end
+                                end)
                             end
                         end
                     else
