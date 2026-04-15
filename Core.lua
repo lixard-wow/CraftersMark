@@ -400,14 +400,6 @@ function addon:PatchFlyoutInstance(flyout)
             return origFlags(b, ...)
         end
     end
-
-    local origElements = behavior.GetElements
-    if type(origElements) == "function" then
-        behavior.GetElements = function(b, fa, ...)
-            if addon.unlockAllEnabled then fa = false end
-            return origElements(b, fa, ...)
-        end
-    end
 end
 
 -- Walk visible frames under root looking for flyout frames to patch.
@@ -555,6 +547,9 @@ function addon:ApplyFlyoutOverrides()
             return addon.hooks[C_TradeSkillUI]["GetHideUnownedFlags"](recipeID)
         end, true)
     end
+
+    -- Patch any flyout instances already open
+    self:PatchVisibleFlyouts(ProfessionsFrame)
 
     -- Re-enable any slot buttons already drawn with grayed state
     self:RefreshReagentSlots()
