@@ -402,10 +402,13 @@ function addon:PatchFlyoutInstance(flyout)
         end
     end
 
-    -- Force the ScrollBox to re-render items with the new IsElementEnabled result
-    if flyout.ScrollBox and flyout.ScrollBox.FullUpdate then
-        pcall(function() flyout.ScrollBox:FullUpdate() end)
-    end
+    -- Force re-render and directly enable all buttons in the scroll target
+    pcall(function()
+        if flyout.ScrollBox and flyout.ScrollBox.FullUpdate then
+            flyout.ScrollBox:FullUpdate()
+        end
+        addon:EnableFlyoutButtons(flyout)
+    end)
 end
 
 -- Scan direct children of the schematic forms for open flyout frames and patch them.
@@ -434,6 +437,25 @@ function addon:PatchVisibleFlyouts()
     scanChildren(of)
 end
 
+-- Directly enable every button rendered in the flyout's ScrollTarget.
+-- Needed because the button enabled state is baked into element data at
+-- flyout build time — patching IsElementEnabled alone doesn't re-enable them.
+function addon:EnableFlyoutButtons(flyout)
+    if not flyout or not flyout.ScrollBox then return end
+    local target = flyout.ScrollBox.ScrollTarget
+    if not target then return end
+    pcall(function()
+        for i = 1, target:GetNumChildren() do
+            local child = select(i, target:GetChildren())
+            if child then
+                if child.Enable then child:Enable() end
+                if child.Icon then child.Icon:SetDesaturated(false) end
+                if child.SlotBackground then child.SlotBackground:SetDesaturated(false) end
+            end
+        end
+    end)
+end
+
 -- Lightweight watcher: patches flyouts as they open while unlock is active.
 -- Runs every 0.1s but only scans direct SchematicForm children so it's cheap.
 function addon:SetFlyoutWatcher(enabled)
@@ -445,6 +467,24 @@ function addon:SetFlyoutWatcher(enabled)
             if f.elapsed < 0.1 then return end
             f.elapsed = 0
             addon:PatchVisibleFlyouts()
+            -- Re-enable buttons on every tick in case the scroll view re-grays them
+            local pf = ProfessionsFrame
+            local cf = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
+            local of = pf and pf.OrdersPage and pf.OrdersPage.OrderView
+                and pf.OrdersPage.OrderView.OrderDetails
+                and pf.OrdersPage.OrderView.OrderDetails.SchematicForm
+            local function enableInForm(form)
+                if not form then return end
+                pcall(function()
+                    for i = 1, form:GetNumChildren() do
+                        local child = select(i, form:GetChildren())
+                        local ok, hasBeh = pcall(function() return child.behavior ~= nil end)
+                        if ok and hasBeh then addon:EnableFlyoutButtons(child) end
+                    end
+                end)
+            end
+            enableInForm(cf)
+            enableInForm(of)
         end)
     end
     if enabled then
