@@ -55,7 +55,9 @@ function addon:OnInitialize()
 
     SLASH_CRAFTERSMARK1 = "/cm"
     SlashCmdList["CRAFTERSMARK"] = function(msg)
-        if msg == "debug" then addon:DebugFlyout() end
+        if msg == "debug" then addon:DebugFlyout()
+        elseif msg == "debug slots" then addon:DebugSlots()
+        end
     end
 
     print("|cff00ff00CraftersMark loaded|r")
@@ -573,6 +575,48 @@ function addon:SetFlyoutWatcher(enabled)
     end
 end
 
+-- Dump reagent slot fields to find the count text element. Run: /cm debug slots
+function addon:DebugSlots()
+    print("|cff00ff00CraftersMark Debug Slots|r")
+    local pf = ProfessionsFrame
+    local cf = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
+    if not cf then print("SchematicForm not found") return end
+    local containers = {cf.Reagents, cf.OptionalReagents, cf.FinishingReagents}
+    for _, container in ipairs(containers) do
+        if container and container:IsVisible() then
+            local name = container:GetDebugName() or "?"
+            print(format("Container: %s (%d children)", name, container:GetNumChildren()))
+            for i = 1, math.min(container:GetNumChildren(), 3) do
+                local slot = select(i, container:GetChildren())
+                if slot then
+                    print(format("  slot[%d]: %s", i, slot:GetDebugName() or "?"))
+                    -- Print non-function/non-userdata fields on slot
+                    pcall(function()
+                        for k, v in pairs(slot) do
+                            local t = type(v)
+                            if t ~= "function" and t ~= "userdata" then
+                                print(format("    slot.%s = %s", k, t == "table" and "[table]" or tostring(v)))
+                            end
+                        end
+                    end)
+                    local btn = slot.Button or slot
+                    if btn ~= slot then
+                        print(format("  slot[%d].Button fields:", i))
+                        pcall(function()
+                            for k, v in pairs(btn) do
+                                local t = type(v)
+                                if t ~= "function" and t ~= "userdata" then
+                                    print(format("    btn.%s = %s", k, t == "table" and "[table]" or tostring(v)))
+                                end
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end
+
 -- Dump flyout state for debugging. Run: /cm debug
 function addon:DebugFlyout()
     print("|cff00ff00CraftersMark Debug|r")
@@ -743,6 +787,18 @@ function addon:RefreshReagentSlots()
             if btn.Enable then btn:Enable() end
             if btn.Icon then btn.Icon:SetDesaturated(false) end
             if btn.SlotBackground then btn.SlotBackground:SetDesaturated(false) end
+            -- Force the count text to white. Blizzard colors it grey when the
+            -- player doesn't have enough reagents; we fake the count so the
+            -- text should be white to match items the player actually owns.
+            pcall(function()
+                local function forceWhite(f)
+                    if f and f.SetTextColor then f:SetTextColor(1, 1, 1) end
+                end
+                forceWhite(slot.Count)
+                forceWhite(btn.Count)
+                forceWhite(slot.Quantity)
+                forceWhite(btn.Quantity)
+            end)
         end
     end
 
