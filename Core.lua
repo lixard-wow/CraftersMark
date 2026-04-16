@@ -783,22 +783,24 @@ function addon:RefreshReagentSlots()
                 end
             end)
         end
+        -- slot.Name is the FontString showing "count/required ItemName".
+        -- Hook SetTextColor once so Blizzard's update function can't re-grey it.
+        -- Guard against re-entry since our hook itself calls SetTextColor.
+        if slot.Name and not slot._cmNameHooked then
+            slot._cmNameHooked = true
+            hooksecurefunc(slot.Name, "SetTextColor", function(f, r, g, b)
+                if addon.unlockAllEnabled and not f._cmInHook then
+                    f._cmInHook = true
+                    f:SetTextColor(1, 1, 1)
+                    f._cmInHook = false
+                end
+            end)
+        end
         if addon.unlockAllEnabled then
             if btn.Enable then btn:Enable() end
             if btn.Icon then btn.Icon:SetDesaturated(false) end
             if btn.SlotBackground then btn.SlotBackground:SetDesaturated(false) end
-            -- Force the count text to white. Blizzard colors it grey when the
-            -- player doesn't have enough reagents; we fake the count so the
-            -- text should be white to match items the player actually owns.
-            pcall(function()
-                local function forceWhite(f)
-                    if f and f.SetTextColor then f:SetTextColor(1, 1, 1) end
-                end
-                forceWhite(slot.Count)
-                forceWhite(btn.Count)
-                forceWhite(slot.Quantity)
-                forceWhite(btn.Quantity)
-            end)
+            if slot.Name and slot.Name.SetTextColor then slot.Name:SetTextColor(1, 1, 1) end
         end
     end
 
