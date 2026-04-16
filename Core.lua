@@ -649,6 +649,14 @@ function addon:BuildReagentCheckbox(parent)
             ProfessionsFrame.CraftingPage.SchematicForm:UpdateAllSlots()
         end
 
+        if addon.unlockAllEnabled then
+            C_Timer.After(0, function()
+                if addon.unlockAllEnabled then
+                    addon:AutoSelectCurrencyReagents()
+                end
+            end)
+        end
+
         local container = self:GetParent()
         if container then
             local qDialog = container.QualityDialog
@@ -664,6 +672,60 @@ function addon:BuildReagentCheckbox(parent)
     end)
 
     return checkbox
+end
+
+function addon:AutoSelectCurrencyReagents()
+    local recipeID = self:GetActiveRecipeID()
+    if not recipeID then return end
+
+    local ok, schematic = pcall(C_TradeSkillUI.GetRecipeSchematic, recipeID, false)
+    if not ok or not schematic or not schematic.reagentSlotSchematics then return end
+
+    local currencyBySlot = {}
+    for _, slotSchematic in ipairs(schematic.reagentSlotSchematics) do
+        if slotSchematic.reagents then
+            for _, reagent in ipairs(slotSchematic.reagents) do
+                if reagent.currencyID then
+                    currencyBySlot[slotSchematic.dataSlotIndex] = reagent
+                    break
+                end
+            end
+        end
+    end
+
+    if not next(currencyBySlot) then return end
+
+    local function applyToSlot(slotWidget)
+        pcall(function()
+            if not slotWidget.GetSlotSchematic then return end
+            local ss = slotWidget:GetSlotSchematic()
+            if not ss then return end
+            local reagent = currencyBySlot[ss.dataSlotIndex]
+            if reagent and slotWidget.OnReagentSelected then
+                slotWidget:OnReagentSelected(reagent)
+            end
+        end)
+    end
+
+    local function applyToForm(form)
+        if not form or not form:IsVisible() then return end
+        for _, container in ipairs({form.Reagents, form.FinishingReagents, form.OptionalReagents}) do
+            if container then
+                pcall(function()
+                    for i = 1, container:GetNumChildren() do
+                        applyToSlot(select(i, container:GetChildren()))
+                    end
+                end)
+            end
+        end
+    end
+
+    local pf = ProfessionsFrame
+    applyToForm(pf and pf.CraftingPage and pf.CraftingPage.SchematicForm)
+    applyToForm(pf and pf.OrdersPage and pf.OrdersPage.OrderView
+        and pf.OrdersPage.OrderView.OrderDetails
+        and pf.OrdersPage.OrderView.OrderDetails.SchematicForm)
+    applyToForm(ProfessionsCustomerOrdersFrame and ProfessionsCustomerOrdersFrame.Form)
 end
 
 function addon:GetActiveRecipeID()
