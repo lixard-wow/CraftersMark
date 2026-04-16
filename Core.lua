@@ -463,6 +463,16 @@ function addon:EnableFlyoutButtons(flyout)
                         if addon.unlockAllEnabled then
                             s:Enable()
                             s.enabled = true  -- keep Lua field in sync with frame state
+                            pcall(function()
+                                local ed = s.GetElementData and s:GetElementData()
+                                if ed and ed.reagent and ed.reagent.itemID then
+                                    local recipeID = addon:GetActiveRecipeID()
+                                    if recipeID then
+                                        local qty = addon:GetReagentRequirementMap(recipeID)[ed.reagent.itemID]
+                                        if qty then s.count = qty end
+                                    end
+                                end
+                            end)
                             if s.Icon then s.Icon:SetDesaturated(false) end
                             if s.SlotBackground then s.SlotBackground:SetDesaturated(false) end
                         end
@@ -474,6 +484,19 @@ function addon:EnableFlyoutButtons(flyout)
                 -- but the flyout opens before our behavior patch is applied, so it stays false.
                 -- Setting it directly here is the only reliable way to ungate the click handler.
                 child.enabled = true
+                -- btn.count is set by the flyout initializer via a C-level API that bypasses
+                -- our Lua hooks. Set it directly to the schematic's required quantity so the
+                -- button displays the correct count instead of the real inventory count.
+                pcall(function()
+                    local ed = child.GetElementData and child:GetElementData()
+                    if ed and ed.reagent and ed.reagent.itemID then
+                        local recipeID = addon:GetActiveRecipeID()
+                        if recipeID then
+                            local qty = addon:GetReagentRequirementMap(recipeID)[ed.reagent.itemID]
+                            if qty then child.count = qty end
+                        end
+                    end
+                end)
                 if child.Icon then child.Icon:SetDesaturated(false) end
                 if child.SlotBackground then child.SlotBackground:SetDesaturated(false) end
             end
@@ -633,6 +656,14 @@ function addon:DebugFlyout()
                                             if t ~= "function" and t ~= "userdata" then
                                                 if t == "table" then
                                                     print(format("        ed.%s = [table]", tostring(k)))
+                                                    -- Expand reagent sub-table
+                                                    if k == "reagent" then
+                                                        for rk, rv in pairs(v) do
+                                                            if type(rv) ~= "function" and type(rv) ~= "userdata" then
+                                                                print(format("          reagent.%s = %s", tostring(rk), tostring(rv)))
+                                                            end
+                                                        end
+                                                    end
                                                 else
                                                     print(format("        ed.%s = %s", tostring(k), tostring(v)))
                                                 end
