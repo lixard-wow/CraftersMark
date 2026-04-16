@@ -792,11 +792,15 @@ function addon:ApplyFlyoutOverrides()
     end
 
     -- GetHideUnownedFlags(recipeID) -> cannotModifyHideUnowned, alwaysShowUnowned
-    -- Return false, true so the flyout shows and allows selecting unowned items
+    -- Return false, false: let the flyout use its normal single-panel layout.
+    -- Our count hook already returns non-zero for all reagents, so the flyout
+    -- treats them as owned and includes them in the normal panel. Returning
+    -- alwaysShowUnowned=true would trigger a second "unowned" panel alongside
+    -- the normal one, making the flyout appear twice as wide.
     if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags
         and not self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then
         self:RawHook(C_TradeSkillUI, "GetHideUnownedFlags", function(recipeID)
-            if addon.unlockAllEnabled then return false, true end
+            if addon.unlockAllEnabled then return false, false end
             return addon.hooks[C_TradeSkillUI]["GetHideUnownedFlags"](recipeID)
         end, true)
     end
