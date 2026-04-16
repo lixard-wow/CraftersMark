@@ -466,12 +466,17 @@ function addon:EnableFlyoutButtons(flyout)
                             pcall(function()
                                 local ed = s.GetElementData and s:GetElementData()
                                 if ed and ed.reagent then
-                                    local recipeID = addon:GetActiveRecipeID()
-                                    if recipeID then
-                                        local itemMap, currencyMap = addon:GetReagentRequirementMaps(recipeID)
-                                        local qty = (ed.reagent.itemID and itemMap[ed.reagent.itemID])
-                                                 or (ed.reagent.currencyID and currencyMap[ed.reagent.currencyID])
-                                        if qty then s.count = qty end
+                                    if ed.reagent.currencyID then
+                                        -- Crests are currencies — hide the count entirely
+                                        s.count = 0
+                                        if s.Count then s.Count:Hide() end
+                                    elseif ed.reagent.itemID then
+                                        local recipeID = addon:GetActiveRecipeID()
+                                        if recipeID then
+                                            local itemMap = addon:GetReagentRequirementMaps(recipeID)
+                                            local qty = itemMap[ed.reagent.itemID]
+                                            if qty then s.count = qty end
+                                        end
                                     end
                                 end
                             end)
@@ -487,18 +492,21 @@ function addon:EnableFlyoutButtons(flyout)
                 -- Setting it directly here is the only reliable way to ungate the click handler.
                 child.enabled = true
                 -- btn.count is set by the flyout initializer via a C-level API that bypasses
-                -- our Lua hooks. Set it directly to the schematic's required quantity so the
-                -- button displays the correct count instead of the real inventory count.
-                -- Crests are currencies (ed.reagent.currencyID), not items (ed.reagent.itemID).
+                -- our Lua hooks. For item reagents set it to the required quantity; for
+                -- currency reagents (crests) hide the count frame entirely.
                 pcall(function()
                     local ed = child.GetElementData and child:GetElementData()
                     if ed and ed.reagent then
-                        local recipeID = addon:GetActiveRecipeID()
-                        if recipeID then
-                            local itemMap, currencyMap = addon:GetReagentRequirementMaps(recipeID)
-                            local qty = (ed.reagent.itemID and itemMap[ed.reagent.itemID])
-                                     or (ed.reagent.currencyID and currencyMap[ed.reagent.currencyID])
-                            if qty then child.count = qty end
+                        if ed.reagent.currencyID then
+                            child.count = 0
+                            if child.Count then child.Count:Hide() end
+                        elseif ed.reagent.itemID then
+                            local recipeID = addon:GetActiveRecipeID()
+                            if recipeID then
+                                local itemMap = addon:GetReagentRequirementMaps(recipeID)
+                                local qty = itemMap[ed.reagent.itemID]
+                                if qty then child.count = qty end
+                            end
                         end
                     end
                 end)
