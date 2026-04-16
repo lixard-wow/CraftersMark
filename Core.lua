@@ -470,15 +470,19 @@ function addon:EnableFlyoutButtons(flyout)
                 if child.Enable then child:Enable() end
                 if child.Icon then child.Icon:SetDesaturated(false) end
                 if child.SlotBackground then child.SlotBackground:SetDesaturated(false) end
-                -- Update cached elementData enabled fields so OnClick doesn't bail out
+                -- Patch element data via the C-level GetElementData() API.
+                -- ScrollBox stores data C-side via frame:SetElementData(), so child.elementData
+                -- is always nil — we must call child:GetElementData() to reach the real table.
                 pcall(function()
-                    local ed = child.elementData
+                    local ed = child.GetElementData and child:GetElementData()
                     if ed then
                         if ed.enabled ~= nil then ed.enabled = true end
                         if ed.isOwned ~= nil then ed.isOwned = true end
                         if ed.available ~= nil then ed.available = true end
                         if ed.isAvailable ~= nil then ed.isAvailable = true end
                         if ed.hasCount ~= nil then ed.hasCount = true end
+                        if ed.isDisabled ~= nil then ed.isDisabled = false end
+                        if ed.disabled ~= nil then ed.disabled = false end
                     end
                 end)
             end
@@ -602,17 +606,35 @@ function addon:DebugFlyout()
                                 print(format("    btn[%d]: IsEnabled=%s desatIcon=%s hasOnClick=%s type=%s",
                                     j, tostring(enabled), tostring(desatIcon), tostring(hasOnClick),
                                     tostring(btn.GetObjectType and btn:GetObjectType())))
-                                -- Print elementData fields to find what OnClick checks
+                                -- Print all non-function Lua fields and the C-level elementData
                                 pcall(function()
-                                    local ed = btn.elementData
+                                    print(format("      _cmFlyoutHooked=%s", tostring(btn._cmFlyoutHooked)))
+                                    for k, v in pairs(btn) do
+                                        local t = type(v)
+                                        if t ~= "function" and t ~= "userdata" then
+                                            if t == "table" then
+                                                print(format("      btn.%s = [table]", tostring(k)))
+                                            else
+                                                print(format("      btn.%s = %s", tostring(k), tostring(v)))
+                                            end
+                                        end
+                                    end
+                                    -- C-level element data (ScrollBox stores it via SetElementData)
+                                    local ed = btn.GetElementData and btn:GetElementData()
                                     if ed then
+                                        print("      GetElementData() fields:")
                                         for k, v in pairs(ed) do
-                                            if type(v) ~= "function" and type(v) ~= "table" then
-                                                print(format("      ed.%s = %s", tostring(k), tostring(v)))
+                                            local t = type(v)
+                                            if t ~= "function" and t ~= "userdata" then
+                                                if t == "table" then
+                                                    print(format("        ed.%s = [table]", tostring(k)))
+                                                else
+                                                    print(format("        ed.%s = %s", tostring(k), tostring(v)))
+                                                end
                                             end
                                         end
                                     else
-                                        print("      elementData: nil")
+                                        print("      GetElementData() = nil")
                                     end
                                 end)
                             end
