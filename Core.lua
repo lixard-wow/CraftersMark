@@ -37,6 +37,7 @@ function addon:OnInitialize()
     self:SecureHookScript(self.orderForm.ReagentContainer.Reagents, "OnHide", "SetupReagentToggle")
 
     self:SecureHookScript(ProfessionsFrame, "OnShow", "CreateOrdersAccess")
+    self:SecureHookScript(ProfessionsFrame, "OnHide", "OnProfessionsFrameHide")
     self:SecureHookScript(AuctionHouseFrame.TitleContainer, "OnShow", "CreateOrdersAccess")
 
     local cf = ProfessionsFrame.CraftingPage.SchematicForm
@@ -83,6 +84,24 @@ end
 
 function addon:OnHide()
     EventRegistry:UnregisterCallback("Professions.AllocationUpdated", self)
+end
+
+-- Called when ProfessionsFrame hides (walking away from bench, closing window, etc.).
+-- Ensures unlock hooks and watchers are always torn down when leaving the crafting UI,
+-- regardless of whether the checkbox's OnHide fired first.
+function addon:OnProfessionsFrameHide()
+    self:UnhookAll()
+    self:SetFlyoutWatcher(false)
+    self._reagentCache = nil
+end
+
+function addon:UnhookAll()
+    addon.unlockAllEnabled = false
+    if self:IsHooked(ItemUtil, "GetCraftingReagentCount") then self:Unhook(ItemUtil, "GetCraftingReagentCount") end
+    if ProfessionsUtil and self:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then self:Unhook(ProfessionsUtil, "GetReagentQuantityInPossession") end
+    if self:IsHooked(C_Item, "GetItemCount") then self:Unhook(C_Item, "GetItemCount") end
+    if self:IsHooked(_G, "GetItemCount") then self:Unhook(_G, "GetItemCount") end
+    if C_TradeSkillUI and self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then self:Unhook(C_TradeSkillUI, "GetHideUnownedFlags") end
 end
 
 function addon:CreateOrdersAccess(parent)
@@ -171,7 +190,6 @@ function addon:OnCommReceived(prefix, message, channel, sender)
     end
 
     if payload.query and payload.query.recipeID then
-        ProfessionsFrame.CraftingPage:OnLoad()
         local known = C_TradeSkillUI.IsRecipeProfessionLearned(payload.query.recipeID)
         local recipe = C_TradeSkillUI.GetRecipeInfo(payload.query.recipeID)
 
@@ -824,12 +842,7 @@ function addon:BuildReagentCheckbox(parent)
 
     checkbox:SetScript("OnClick", function(self) self:Refresh() end)
     checkbox:SetScript("OnHide", function()
-        addon.unlockAllEnabled = false
-        if addon:IsHooked(ItemUtil, "GetCraftingReagentCount") then addon:Unhook(ItemUtil, "GetCraftingReagentCount") end
-        if ProfessionsUtil and addon:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then addon:Unhook(ProfessionsUtil, "GetReagentQuantityInPossession") end
-        if addon:IsHooked(C_Item, "GetItemCount") then addon:Unhook(C_Item, "GetItemCount") end
-        if addon:IsHooked(_G, "GetItemCount") then addon:Unhook(_G, "GetItemCount") end
-        if C_TradeSkillUI and addon:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then addon:Unhook(C_TradeSkillUI, "GetHideUnownedFlags") end
+        addon:UnhookAll()
         addon:SetFlyoutWatcher(false)
         addon._reagentCache = nil
         -- per-instance behavior patches remain but unlockAllEnabled=false makes them pass through
