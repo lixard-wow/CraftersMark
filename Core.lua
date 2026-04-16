@@ -524,6 +524,20 @@ function addon:DebugFlyout()
     print("|cff00ff00CraftersMark Debug|r")
     print("unlockAllEnabled:", self.unlockAllEnabled)
 
+    -- Check active recipe + schematic cache
+    local activeRecipeID = self:GetActiveRecipeID()
+    print(format("GetActiveRecipeID() = %s", tostring(activeRecipeID)))
+    if activeRecipeID then
+        local map = self:GetReagentRequirementMap(activeRecipeID)
+        local count = 0
+        for itemID, qty in pairs(map) do
+            count = count + 1
+            print(format("  schematic: itemID=%d requiredQty=%d", itemID, qty))
+            if count >= 20 then print("  (truncated)") break end
+        end
+        if count == 0 then print("  schematic map is empty") end
+    end
+
     -- Check count hooks
     local testItemID = 213746 -- Runed Harbinger Crest
     local craftCount = ItemUtil.GetCraftingReagentCount(testItemID)
