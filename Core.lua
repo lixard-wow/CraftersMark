@@ -462,29 +462,20 @@ function addon:EnableFlyoutButtons(flyout)
                     hooksecurefunc(child, "Disable", function(s)
                         if addon.unlockAllEnabled then
                             s:Enable()
+                            s.enabled = true  -- keep Lua field in sync with frame state
                             if s.Icon then s.Icon:SetDesaturated(false) end
                             if s.SlotBackground then s.SlotBackground:SetDesaturated(false) end
                         end
                     end)
                 end
                 if child.Enable then child:Enable() end
+                -- btn.enabled is the Lua field the OnClick handler checks before processing
+                -- a selection. It's set by the flyout initializer based on IsElementEnabled,
+                -- but the flyout opens before our behavior patch is applied, so it stays false.
+                -- Setting it directly here is the only reliable way to ungate the click handler.
+                child.enabled = true
                 if child.Icon then child.Icon:SetDesaturated(false) end
                 if child.SlotBackground then child.SlotBackground:SetDesaturated(false) end
-                -- Patch element data via the C-level GetElementData() API.
-                -- ScrollBox stores data C-side via frame:SetElementData(), so child.elementData
-                -- is always nil — we must call child:GetElementData() to reach the real table.
-                pcall(function()
-                    local ed = child.GetElementData and child:GetElementData()
-                    if ed then
-                        if ed.enabled ~= nil then ed.enabled = true end
-                        if ed.isOwned ~= nil then ed.isOwned = true end
-                        if ed.available ~= nil then ed.available = true end
-                        if ed.isAvailable ~= nil then ed.isAvailable = true end
-                        if ed.hasCount ~= nil then ed.hasCount = true end
-                        if ed.isDisabled ~= nil then ed.isDisabled = false end
-                        if ed.disabled ~= nil then ed.disabled = false end
-                    end
-                end)
             end
         end
     end)
