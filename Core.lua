@@ -465,10 +465,12 @@ function addon:EnableFlyoutButtons(flyout)
                             s.enabled = true  -- keep Lua field in sync with frame state
                             pcall(function()
                                 local ed = s.GetElementData and s:GetElementData()
-                                if ed and ed.reagent and ed.reagent.itemID then
+                                if ed and ed.reagent then
                                     local recipeID = addon:GetActiveRecipeID()
                                     if recipeID then
-                                        local qty = addon:GetReagentRequirementMap(recipeID)[ed.reagent.itemID]
+                                        local itemMap, currencyMap = addon:GetReagentRequirementMaps(recipeID)
+                                        local qty = (ed.reagent.itemID and itemMap[ed.reagent.itemID])
+                                                 or (ed.reagent.currencyID and currencyMap[ed.reagent.currencyID])
                                         if qty then s.count = qty end
                                     end
                                 end
@@ -487,12 +489,15 @@ function addon:EnableFlyoutButtons(flyout)
                 -- btn.count is set by the flyout initializer via a C-level API that bypasses
                 -- our Lua hooks. Set it directly to the schematic's required quantity so the
                 -- button displays the correct count instead of the real inventory count.
+                -- Crests are currencies (ed.reagent.currencyID), not items (ed.reagent.itemID).
                 pcall(function()
                     local ed = child.GetElementData and child:GetElementData()
-                    if ed and ed.reagent and ed.reagent.itemID then
+                    if ed and ed.reagent then
                         local recipeID = addon:GetActiveRecipeID()
                         if recipeID then
-                            local qty = addon:GetReagentRequirementMap(recipeID)[ed.reagent.itemID]
+                            local itemMap, currencyMap = addon:GetReagentRequirementMaps(recipeID)
+                            local qty = (ed.reagent.itemID and itemMap[ed.reagent.itemID])
+                                     or (ed.reagent.currencyID and currencyMap[ed.reagent.currencyID])
                             if qty then child.count = qty end
                         end
                     end
@@ -551,14 +556,17 @@ function addon:DebugFlyout()
     local activeRecipeID = self:GetActiveRecipeID()
     print(format("GetActiveRecipeID() = %s", tostring(activeRecipeID)))
     if activeRecipeID then
-        local map = self:GetReagentRequirementMap(activeRecipeID)
+        local itemMap, currencyMap = self:GetReagentRequirementMaps(activeRecipeID)
         local count = 0
-        for itemID, qty in pairs(map) do
+        for itemID, qty in pairs(itemMap) do
             count = count + 1
-            print(format("  schematic: itemID=%d requiredQty=%d", itemID, qty))
-            if count >= 20 then print("  (truncated)") break end
+            print(format("  schematic item:     itemID=%d requiredQty=%d", itemID, qty))
         end
-        if count == 0 then print("  schematic map is empty") end
+        for currID, qty in pairs(currencyMap) do
+            count = count + 1
+            print(format("  schematic currency: currencyID=%d requiredQty=%d", currID, qty))
+        end
+        if count == 0 then print("  schematic maps are empty") end
     end
 
     -- Check count hooks
@@ -841,14 +849,16 @@ function addon:GetActiveRecipeID()
     end
 end
 
--- Build (and cache) a map of itemID → quantityRequired for the given recipe.
+-- Build (and cache) two maps for the given recipe:
+--   itemMap[itemID]         → quantityRequired  (for item-based reagents)
+--   currencyMap[currencyID] → quantityRequired  (for currency-based reagents like crests)
 -- The schematic doesn't change between opens of the same recipe, so we only
 -- call GetRecipeSchematic once per recipeID.
-function addon:GetReagentRequirementMap(recipeID)
+function addon:GetReagentRequirementMaps(recipeID)
     if self._reagentCache and self._reagentCache.recipeID == recipeID then
-        return self._reagentCache.map
+        return self._reagentCache.itemMap, self._reagentCache.currencyMap
     end
-    local map = {}
+    local itemMap, currencyMap = {}, {}
     local ok, schematic = pcall(C_TradeSkillUI.GetRecipeSchematic, recipeID, false)
     if ok and schematic and schematic.reagentSlotSchematics then
         for _, slot in ipairs(schematic.reagentSlotSchematics) do
@@ -856,24 +866,27 @@ function addon:GetReagentRequirementMap(recipeID)
             if slot.reagents then
                 for _, reagent in ipairs(slot.reagents) do
                     if reagent.itemID then
-                        map[reagent.itemID] = qty
+                        itemMap[reagent.itemID] = qty
+                    end
+                    if reagent.currencyID then
+                        currencyMap[reagent.currencyID] = qty
                     end
                 end
             end
         end
     end
-    self._reagentCache = {recipeID = recipeID, map = map}
-    return map
+    self._reagentCache = {recipeID = recipeID, itemMap = itemMap, currencyMap = currencyMap}
+    return itemMap, currencyMap
 end
 
--- Replace all count APIs with the exact quantity the recipe requires for that
--- item, so slots and flyout buttons show "1" or "2" instead of "999".
--- Falls back to 999 for items not in the schematic (they won't appear in the
--- flyout anyway, so it doesn't matter).
+-- Replace item count APIs with the exact quantity the recipe requires.
+-- Crests are currencies so they won't appear here; this covers item reagents.
+-- Falls back to 999 for items not in the schematic.
 function addon:FakeReagentCount(itemID)
     local recipeID = self:GetActiveRecipeID()
     if recipeID then
-        local qty = self:GetReagentRequirementMap(recipeID)[itemID]
+        local itemMap = self:GetReagentRequirementMaps(recipeID)
+        local qty = itemMap[itemID]
         if qty then return qty end
     end
     return 999
