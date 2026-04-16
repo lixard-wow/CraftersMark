@@ -55,9 +55,7 @@ function addon:OnInitialize()
 
     SLASH_CRAFTERSMARK1 = "/cm"
     SlashCmdList["CRAFTERSMARK"] = function(msg)
-        if msg == "debug" then addon:DebugFlyout()
-        elseif msg == "debug slots" then addon:DebugSlots()
-        end
+        if msg == "debug" then addon:DebugFlyout() end
     end
 
     print("|cff00ff00CraftersMark loaded|r")
@@ -566,76 +564,12 @@ function addon:SetFlyoutWatcher(enabled)
             end
             enableInForm(cf)
             enableInForm(of)
-            -- Force slot name text white. Blizzard recolors it grey on every
-            -- slot update (BAG_UPDATE, transaction change, etc.), so we push
-            -- it back to white every watcher tick rather than fighting SetTextColor.
-            local function whiteSlotNames(form)
-                if not form then return end
-                local function doContainer(c)
-                    if not c or not c:IsVisible() then return end
-                    pcall(function()
-                        for i = 1, c:GetNumChildren() do
-                            local slot = select(i, c:GetChildren())
-                            if slot and slot.Name and slot.Name.SetTextColor then
-                                slot.Name:SetTextColor(1, 1, 1)
-                            end
-                        end
-                    end)
-                end
-                doContainer(form.Reagents)
-                doContainer(form.OptionalReagents)
-                doContainer(form.FinishingReagents)
-            end
-            whiteSlotNames(cf)
-            whiteSlotNames(of)
         end)
     end
     if enabled then
         self._flyoutWatcher:Show()
     else
         self._flyoutWatcher:Hide()
-    end
-end
-
--- Dump reagent slot fields to find the count text element. Run: /cm debug slots
-function addon:DebugSlots()
-    print("|cff00ff00CraftersMark Debug Slots|r")
-    local pf = ProfessionsFrame
-    local cf = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
-    if not cf then print("SchematicForm not found") return end
-    local containers = {cf.Reagents, cf.OptionalReagents, cf.FinishingReagents}
-    for _, container in ipairs(containers) do
-        if container and container:IsVisible() then
-            local name = container:GetDebugName() or "?"
-            print(format("Container: %s (%d children)", name, container:GetNumChildren()))
-            for i = 1, math.min(container:GetNumChildren(), 3) do
-                local slot = select(i, container:GetChildren())
-                if slot then
-                    print(format("  slot[%d]: %s", i, slot:GetDebugName() or "?"))
-                    -- Print non-function/non-userdata fields on slot
-                    pcall(function()
-                        for k, v in pairs(slot) do
-                            local t = type(v)
-                            if t ~= "function" and t ~= "userdata" then
-                                print(format("    slot.%s = %s", k, t == "table" and "[table]" or tostring(v)))
-                            end
-                        end
-                    end)
-                    local btn = slot.Button or slot
-                    if btn ~= slot then
-                        print(format("  slot[%d].Button fields:", i))
-                        pcall(function()
-                            for k, v in pairs(btn) do
-                                local t = type(v)
-                                if t ~= "function" and t ~= "userdata" then
-                                    print(format("    btn.%s = %s", k, t == "table" and "[table]" or tostring(v)))
-                                end
-                            end
-                        end)
-                    end
-                end
-            end
-        end
     end
 end
 
