@@ -770,13 +770,69 @@ function addon:BuildReagentCheckbox(parent)
         if addon:IsHooked(_G, "GetItemCount") then addon:Unhook(_G, "GetItemCount") end
         if C_TradeSkillUI and addon:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then addon:Unhook(C_TradeSkillUI, "GetHideUnownedFlags") end
         addon:SetFlyoutWatcher(false)
+        addon._reagentCache = nil
         -- per-instance behavior patches remain but unlockAllEnabled=false makes them pass through
     end)
 
     return checkbox
 end
 
-function addon:FakeReagentCount() return 999 end
+-- Return the active recipe ID from whichever crafting form is open.
+function addon:GetActiveRecipeID()
+    local pf = ProfessionsFrame
+    local cf = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
+    if cf and cf.transaction and cf.transaction.recipeID then
+        return cf.transaction.recipeID
+    end
+    local of = pf and pf.OrdersPage and pf.OrdersPage.OrderView
+        and pf.OrdersPage.OrderView.OrderDetails
+        and pf.OrdersPage.OrderView.OrderDetails.SchematicForm
+    if of and of.transaction and of.transaction.recipeID then
+        return of.transaction.recipeID
+    end
+    local form = ProfessionsCustomerOrdersFrame and ProfessionsCustomerOrdersFrame.Form
+    if form and form.transaction and form.transaction.recipeID then
+        return form.transaction.recipeID
+    end
+end
+
+-- Build (and cache) a map of itemID → quantityRequired for the given recipe.
+-- The schematic doesn't change between opens of the same recipe, so we only
+-- call GetRecipeSchematic once per recipeID.
+function addon:GetReagentRequirementMap(recipeID)
+    if self._reagentCache and self._reagentCache.recipeID == recipeID then
+        return self._reagentCache.map
+    end
+    local map = {}
+    local ok, schematic = pcall(C_TradeSkillUI.GetRecipeSchematic, recipeID, false)
+    if ok and schematic and schematic.reagentSlotSchematics then
+        for _, slot in ipairs(schematic.reagentSlotSchematics) do
+            local qty = slot.quantityRequired or 1
+            if slot.reagents then
+                for _, reagent in ipairs(slot.reagents) do
+                    if reagent.itemID then
+                        map[reagent.itemID] = qty
+                    end
+                end
+            end
+        end
+    end
+    self._reagentCache = {recipeID = recipeID, map = map}
+    return map
+end
+
+-- Replace all count APIs with the exact quantity the recipe requires for that
+-- item, so slots and flyout buttons show "1" or "2" instead of "999".
+-- Falls back to 999 for items not in the schematic (they won't appear in the
+-- flyout anyway, so it doesn't matter).
+function addon:FakeReagentCount(itemID)
+    local recipeID = self:GetActiveRecipeID()
+    if recipeID then
+        local qty = self:GetReagentRequirementMap(recipeID)[itemID]
+        if qty then return qty end
+    end
+    return 999
+end
 
 function addon:GetUnlockedOperationInfo(details)
     if not self.unlockAllEnabled then return end
