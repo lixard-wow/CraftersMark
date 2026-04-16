@@ -638,7 +638,9 @@ function addon:BuildReagentCheckbox(parent)
             addon:ApplyFlyoutOverrides()
             addon:SetFlyoutWatcher(true)
         else
+            addon:UnhookAll()
             addon:SetFlyoutWatcher(false)
+            addon._reagentCache = nil
         end
 
         if ProfessionsFrame.OrdersPage.OrderView:IsVisible() then
