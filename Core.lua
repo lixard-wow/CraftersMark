@@ -879,14 +879,21 @@ function addon:GetReagentRequirementMaps(recipeID)
     return itemMap, currencyMap
 end
 
--- Replace item count APIs with the exact quantity the recipe requires.
--- Crests are currencies so they won't appear here; this covers item reagents.
--- Falls back to 999 for items not in the schematic.
-function addon:FakeReagentCount(itemID)
+-- Replace all count APIs with the exact quantity the recipe requires.
+-- GetCraftingReagentCount/GetItemCount pass a plain itemID (number).
+-- GetReagentQuantityInPossession passes a reagentData table with .itemID or .currencyID.
+-- Both cases are handled here so every count display shows the required quantity.
+function addon:FakeReagentCount(arg1)
     local recipeID = self:GetActiveRecipeID()
     if recipeID then
-        local itemMap = self:GetReagentRequirementMaps(recipeID)
-        local qty = itemMap[itemID]
+        local itemMap, currencyMap = self:GetReagentRequirementMaps(recipeID)
+        local qty
+        if type(arg1) == "number" then
+            qty = itemMap[arg1]
+        elseif type(arg1) == "table" then
+            qty = (arg1.itemID and itemMap[arg1.itemID])
+               or (arg1.currencyID and currencyMap[arg1.currencyID])
+        end
         if qty then return qty end
     end
     return 999
