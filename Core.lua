@@ -870,16 +870,10 @@ function addon:ClearAutoAllocations()
                     end
                 end
                 if shouldClear then
-                    pcall(function()
-                        if tx.allocations then tx.allocations[slotIndex] = nil end
-                    end)
                     pcall(function() tx:ClearAllocations(slotIndex) end)
                     local widget = findWidget(slotIndex)
                     if widget then
-                        pcall(function()
-                            widget.reagent = nil
-                            widget:Update()
-                        end)
+                        pcall(function() widget:ClearReagent() end)
                     end
                 end
             end
