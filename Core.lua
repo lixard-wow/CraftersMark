@@ -759,7 +759,7 @@ function addon:BuildReagentToggle(parent)
 
     local simBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     parent.SimButton = simBtn
-    simBtn:SetSize(50, 22)
+    simBtn:SetSize(78, 22)
     simBtn:SetText("Sim")
     simBtn:Hide()
     simBtn:SetScript("OnClick", function() addon:OnSimClick() end)
