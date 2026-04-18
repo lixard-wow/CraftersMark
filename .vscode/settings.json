@@ -1,0 +1,34 @@
+{
+    "Lua.runtime.version": "Lua 5.1",
+    "Lua.runtime.builtin": {
+        "basic": "disable",
+        "debug": "disable",
+        "io": "disable",
+        "math": "disable",
+        "os": "disable",
+        "package": "disable",
+        "string": "disable",
+        "table": "disable",
+        "utf8": "disable"
+    },
+    "Lua.workspace.library": [
+        "~\\.vscode\\extensions\\ketho.wow-api-0.22.3\\Annotations\\Core"
+    ],
+    "Lua.diagnostics.globals": [
+        "ProfessionsCustomerOrdersFrame",
+        "ProfessionsFrame",
+        "ScrollUtil",
+        "CreateDataProvider",
+        "AuctionHouseFrame",
+        "CreateScrollBoxListLinearView",
+        "PROFESSIONS_CRAFTING_STAT_TT_CRIT_HEADER",
+        "ItemUtil",
+        "Professions",
+        "DoesAncestryInclude",
+        "DEFAULT_CHAT_FRAME",
+        "ProfessionsUtil",
+        "SlashCmdList",
+        "ButtonFrameTemplate_HidePortrait",
+        "ButtonFrameTemplate_HideButtonBar"
+    ]
+}

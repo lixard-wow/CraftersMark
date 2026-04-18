@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global, redundant-parameter, missing-parameter
 CraftersMark = LibStub("AceAddon-3.0"):NewAddon("CraftersMark", "AceComm-3.0", "AceHook-3.0")
 
 local Serializer = LibStub("LibSerialize")
