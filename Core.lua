@@ -553,6 +553,54 @@ function addon:SetFlyoutWatcher(enabled)
     end
 end
 
+function addon:ClearReagentSlotColors()
+    local function clearSlot(slot)
+        if not slot then return end
+        if slot.overrideNameColor ~= nil then
+            slot.overrideNameColor = nil
+            if slot.Update and not slot._cmUpdating then
+                slot._cmUpdating = true
+                pcall(function() slot:Update() end)
+                slot._cmUpdating = nil
+            end
+        end
+    end
+
+    local function clearContainer(container)
+        if not container then return end
+        for i = 1, container:GetNumChildren() do
+            local child = select(i, container:GetChildren())
+            clearSlot(child)
+            if child and child.GetNumChildren then
+                for j = 1, child:GetNumChildren() do
+                    clearSlot(select(j, child:GetChildren()))
+                end
+            end
+        end
+    end
+
+    local pf = ProfessionsFrame
+    local cf = pf and pf.CraftingPage and pf.CraftingPage.SchematicForm
+    local of = pf and pf.OrdersPage and pf.OrdersPage.OrderView
+        and pf.OrdersPage.OrderView.OrderDetails and pf.OrdersPage.OrderView.OrderDetails.SchematicForm
+    if cf then
+        clearContainer(cf.Reagents)
+        clearContainer(cf.OptionalReagents)
+        clearContainer(cf.FinishingReagents)
+    end
+    if of then
+        clearContainer(of.Reagents)
+        clearContainer(of.OptionalReagents)
+        clearContainer(of.FinishingReagents)
+    end
+    local form = ProfessionsCustomerOrdersFrame and ProfessionsCustomerOrdersFrame.Form
+    if form then
+        clearContainer(form.ReagentContainer and form.ReagentContainer.Reagents)
+        clearContainer(form.OptionalReagents)
+        clearContainer(form.FinishingReagents)
+    end
+end
+
 function addon:RefreshReagentSlots()
     local function processSlot(slot)
         if not slot then return end
@@ -676,6 +724,7 @@ function addon:BuildReagentToggle(parent)
             addon:UnhookAll()
             addon:SetFlyoutWatcher(false)
             addon._reagentCache = nil
+            addon:ClearReagentSlotColors()
         end
 
         if ProfessionsFrame.OrdersPage.OrderView:IsVisible() then
