@@ -1,6 +1,3 @@
----@diagnostic disable: undefined-global, undefined-field, redundant-parameter, missing-parameter, need-check-nil
-if InCombatLockdown() then return end
-
 CraftersMark = LibStub("AceAddon-3.0"):NewAddon("CraftersMark", "AceComm-3.0", "AceHook-3.0")
 
 local Serializer = LibStub("LibSerialize")
@@ -9,7 +6,7 @@ local COMM_PREFIX = "CM_CrafterQuery"
 local CHANNEL_NAME = "CrafterNetwork"
 
 local addon = CraftersMark
-addon.settings = aura_env and aura_env.config or {delay = 30}
+addon.settings = {delay = 30}
 addon.unlockAllEnabled = false
 
 function addon:OnInitialize()
@@ -52,8 +49,6 @@ function addon:OnInitialize()
     self:SecureHookScript(of.FinishingReagents, "OnHide", "SetupReagentToggle")
     self:SecureHookScript(cf.Details, "OnUpdate", "ShowSkillDetails")
     self:SecureHookScript(of.Details, "OnUpdate", "ShowSkillDetails")
-
-    print("|cff00ff00CraftersMark loaded|r")
 end
 
 function addon:SetupChannel()
@@ -93,6 +88,7 @@ function addon:UnhookAll()
     if ProfessionsUtil and self:IsHooked(ProfessionsUtil, "GetReagentQuantityInPossession") then self:Unhook(ProfessionsUtil, "GetReagentQuantityInPossession") end
     if self:IsHooked(C_Item, "GetItemCount") then self:Unhook(C_Item, "GetItemCount") end
     if self:IsHooked(_G, "GetItemCount") then self:Unhook(_G, "GetItemCount") end
+    if C_Container and C_Container.GetItemCount and self:IsHooked(C_Container, "GetItemCount") then self:Unhook(C_Container, "GetItemCount") end
     if C_TradeSkillUI and self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then self:Unhook(C_TradeSkillUI, "GetHideUnownedFlags") end
 end
 
@@ -128,19 +124,27 @@ function addon:SetupReagentToggle(container)
     if _G.CMResultsList then _G.CMResultsList:Hide() end
     if not container then return end
 
-    local toggle = container.ReagentUnlocker or self:BuildReagentCheckbox(container)
+    local toggle = container.ReagentUnlocker or self:BuildReagentToggle(container)
     if not toggle then return end
 
     toggle:ClearAllPoints()
-    toggle:SetChecked(self.unlockAllEnabled)
+    toggle.active = self.unlockAllEnabled
+    toggle:UpdateVisual()
+
+    local simBtn = container.SimButton
+    if simBtn then simBtn:ClearAllPoints() end
 
     if container.Label and container.Label:IsVisible() then
         toggle:SetPoint("LEFT", container.Label, "LEFT", container.Label:GetWrappedWidth(), 0)
         toggle:Show()
+        if simBtn then
+            simBtn:SetPoint("LEFT", toggle, "RIGHT", 4, 0)
+            simBtn:Show()
+        end
     else
         toggle:Hide()
+        if simBtn then simBtn:Hide() end
     end
-
 end
 
 function addon:OnAllocationChange()
@@ -260,7 +264,11 @@ function addon:BuildSearchButton()
     button:SetTextToFit("Find")
     button:SetPoint("TOPRIGHT", form.OrderRecipientTarget, "TOPLEFT", -31, 0)
     button:SetScript("OnClick", function(btn, ...) addon:OnSearchClick(btn, ...) end)
-    button:SetScript("OnUpdate", function(btn)
+    button._nextCheck = 0
+    button:SetScript("OnUpdate", function(btn, elapsed)
+        btn._nextCheck = btn._nextCheck - elapsed
+        if btn._nextCheck > 0 then return end
+        btn._nextCheck = 0.5
         addon.channelIndex = GetChannelName(CHANNEL_NAME)
         btn:SetTextToFit(addon.channelIndex == 0 and "Join" or "Find")
     end)
@@ -336,7 +344,7 @@ function addon:ShowResultsList(anchor)
         if event == "GLOBAL_MOUSE_DOWN" then
             local buttonName = ...
             local isRight = buttonName == "RightButton"
-            local mouseFocus = GetMouseFocus()
+            local mouseFocus = (GetMouseFoci and GetMouseFoci()[1]) or (GetMouseFocus and GetMouseFocus())
             if not isRight and DoesAncestryInclude(self.owner, mouseFocus) then return end
             if isRight or (not DoesAncestryInclude(self, mouseFocus) and mouseFocus ~= self) then
                 self:Hide()
@@ -559,10 +567,23 @@ function addon:RefreshReagentSlots()
                 end
             end)
         end
+        if slot ~= btn and slot.SetOverrideNameColor and slot.Update and not slot._cmNameHooked then
+            slot._cmNameHooked = true
+            hooksecurefunc(slot, "Update", function(s)
+                if addon.unlockAllEnabled and s.SetOverrideNameColor and not s._cmUpdating then
+                    s._cmUpdating = true
+                    s:SetOverrideNameColor(WHITE_FONT_COLOR)
+                    s._cmUpdating = nil
+                end
+            end)
+        end
         if addon.unlockAllEnabled then
             if btn.Enable then btn:Enable() end
             if btn.Icon then btn.Icon:SetDesaturated(false) end
             if btn.SlotBackground then btn.SlotBackground:SetDesaturated(false) end
+            if slot ~= btn and slot.SetOverrideNameColor then
+                slot:SetOverrideNameColor(WHITE_FONT_COLOR)
+            end
         end
     end
 
@@ -609,6 +630,9 @@ function addon:ApplyFlyoutOverrides()
     if not self:IsHooked(_G, "GetItemCount") then
         self:RawHook(_G, "GetItemCount", "FakeReagentCount", true)
     end
+    if C_Container and C_Container.GetItemCount and not self:IsHooked(C_Container, "GetItemCount") then
+        self:RawHook(C_Container, "GetItemCount", "FakeReagentCount", true)
+    end
 
     if C_TradeSkillUI and C_TradeSkillUI.GetHideUnownedFlags
         and not self:IsHooked(C_TradeSkillUI, "GetHideUnownedFlags") then
@@ -621,18 +645,28 @@ function addon:ApplyFlyoutOverrides()
     self:RefreshReagentSlots()
 end
 
-function addon:BuildReagentCheckbox(parent)
+function addon:BuildReagentToggle(parent)
     if not parent then return end
-    local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-    parent.ReagentUnlocker = checkbox
-    checkbox:ClearAllPoints()
-    checkbox:SetSize(20, 20)
-    checkbox.text:SetText(LIGHTGRAY_FONT_COLOR:WrapTextInColorCode("Unlock All"))
-    checkbox:SetChecked(false)
-    checkbox:Hide()
 
-    function checkbox:Refresh()
-        addon.unlockAllEnabled = self:GetChecked() and true or false
+    local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    parent.ReagentUnlocker = btn
+    btn:SetSize(78, 22)
+    btn:Hide()
+    btn.active = false
+
+    function btn:UpdateVisual()
+        if self.active then
+            self:SetText(GREEN_FONT_COLOR:WrapTextInColorCode("Lock All"))
+        else
+            self:SetText(YELLOW_FONT_COLOR:WrapTextInColorCode("Unlock All"))
+        end
+    end
+    btn:UpdateVisual()
+
+    function btn:Refresh()
+        self.active = not self.active
+        self:UpdateVisual()
+        addon.unlockAllEnabled = self.active
 
         if addon.unlockAllEnabled then
             addon:ApplyFlyoutOverrides()
@@ -652,7 +686,7 @@ function addon:BuildReagentCheckbox(parent)
         end
 
         if addon.unlockAllEnabled then
-            C_Timer.After(0, function()
+            C_Timer.After(0.15, function()
                 if addon.unlockAllEnabled then
                     addon:AutoSelectCurrencyReagents()
                 end
@@ -666,59 +700,78 @@ function addon:BuildReagentCheckbox(parent)
         end
     end
 
-    checkbox:SetScript("OnClick", function(self) self:Refresh() end)
-    checkbox:SetScript("OnHide", function()
+    btn:SetScript("OnClick", function(self) self:Refresh() end)
+    btn:SetScript("OnHide", function()
         addon:UnhookAll()
         addon:SetFlyoutWatcher(false)
         addon._reagentCache = nil
     end)
 
-    return checkbox
+    local simBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    parent.SimButton = simBtn
+    simBtn:SetSize(50, 22)
+    simBtn:SetText("Sim")
+    simBtn:Hide()
+    simBtn:SetScript("OnClick", function() addon:OnSimClick() end)
+
+    return btn
 end
 
 function addon:AutoSelectCurrencyReagents()
     local recipeID = self:GetActiveRecipeID()
     if not recipeID then return end
 
-    local ok, schematic = pcall(C_TradeSkillUI.GetRecipeSchematic, recipeID, false)
-    if not ok or not schematic or not schematic.reagentSlotSchematics then return end
-
-    local currencyBySlot = {}
-    for _, slotSchematic in ipairs(schematic.reagentSlotSchematics) do
-        if slotSchematic.reagents then
-            for _, reagent in ipairs(slotSchematic.reagents) do
-                if reagent.currencyID then
-                    currencyBySlot[slotSchematic.dataSlotIndex] = reagent
-                    break
+    local function findWidget(form, slotIndex)
+        local containers = {form.Reagents, form.OptionalReagents, form.FinishingReagents,
+                            form.ReagentContainer and form.ReagentContainer.Reagents}
+        for _, container in ipairs(containers) do
+            if container then
+                for i = 1, container:GetNumChildren() do
+                    local child = select(i, container:GetChildren())
+                    if child and child.reagentSlotSchematic
+                        and child.reagentSlotSchematic.slotIndex == slotIndex then
+                        return child
+                    end
                 end
             end
         end
     end
 
-    if not next(currencyBySlot) then return end
-
-    local function applyToSlot(slotWidget)
-        pcall(function()
-            if not slotWidget.GetSlotSchematic then return end
-            local ss = slotWidget:GetSlotSchematic()
-            if not ss then return end
-            local reagent = currencyBySlot[ss.dataSlotIndex]
-            if reagent and slotWidget.OnReagentSelected then
-                slotWidget:OnReagentSelected(reagent)
-            end
-        end)
-    end
-
     local function applyToForm(form)
-        if not form or not form:IsVisible() then return end
-        for _, container in ipairs({form.Reagents, form.FinishingReagents, form.OptionalReagents}) do
-            if container then
-                pcall(function()
-                    for i = 1, container:GetNumChildren() do
-                        applyToSlot(select(i, container:GetChildren()))
+        if not form or not form:IsVisible() or not form.transaction then return end
+        local tx = form.transaction
+        if not tx.OverwriteAllocation then return end
+        local schematic = tx.recipeSchematic
+        if not schematic or not schematic.reagentSlotSchematics then return end
+        for slotIndex, slotSchematic in ipairs(schematic.reagentSlotSchematics) do
+            if slotSchematic.reagents then
+                local reagent = nil
+                if slotSchematic.reagentType == Enum.CraftingReagentType.Basic then
+                    if #slotSchematic.reagents >= 2 then
+                        reagent = slotSchematic.reagents[#slotSchematic.reagents]
                     end
-                end)
+                elseif #slotSchematic.reagents == 1 then
+                    reagent = slotSchematic.reagents[1]
+                else
+                    for _, r in ipairs(slotSchematic.reagents) do
+                        if r.currencyID then reagent = r end
+                    end
+                end
+                if reagent and (reagent.itemID or reagent.currencyID) then
+                    local qty = (slotSchematic.GetQuantityRequired and slotSchematic:GetQuantityRequired(reagent))
+                        or slotSchematic.quantityRequired or 1
+                    pcall(function() tx:OverwriteAllocation(slotIndex, reagent, qty) end)
+                    local widget = findWidget(form, slotIndex)
+                    if widget and widget.SetReagent then
+                        pcall(function() widget:SetReagent(reagent) end)
+                    end
+                end
             end
+        end
+        if form.TriggerEvent and ProfessionsRecipeSchematicFormMixin
+            and ProfessionsRecipeSchematicFormMixin.Event
+            and ProfessionsRecipeSchematicFormMixin.Event.AllocationsModified then
+            pcall(function() form:TriggerEvent(ProfessionsRecipeSchematicFormMixin.Event.AllocationsModified) end)
         end
     end
 
@@ -810,7 +863,7 @@ function addon:GetUnlockedOperationInfo(details)
         if ok then crafting = result end
     end
     if not crafting or (crafting.baseSkill or 0) == 0 then
-        local ok, result = pcall(C_TradeSkillUI.GetCraftingOperationInfo, recipeID, reagents)
+        local ok, result = pcall(C_TradeSkillUI.GetCraftingOperationInfo, recipeID, reagents, nil, false)
         if ok then crafting = result end
     end
 
@@ -888,4 +941,465 @@ function addon:TableEquals(t1, t2, ignoreMeta)
     return true
 end
 
-CraftersMark:OnInitialize()
+function addon:GetSimSlots(recipeID)
+    local ok, schematic = pcall(C_TradeSkillUI.GetRecipeSchematic, recipeID, false)
+    if not ok or not schematic or not schematic.reagentSlotSchematics then return {} end
+    local slots = {}
+    for _, slot in ipairs(schematic.reagentSlotSchematics) do
+        if slot.reagentType == Enum.CraftingReagentType.Basic and slot.reagents and #slot.reagents >= 2 then
+            local ranks = {}
+            for _, r in ipairs(slot.reagents) do
+                if r.itemID then table.insert(ranks, r.itemID) end
+            end
+            if #ranks >= 2 then
+                table.insert(slots, {
+                    dataSlotIndex    = slot.dataSlotIndex,
+                    quantityRequired = slot.quantityRequired or 1,
+                    ranks            = ranks,
+                })
+            end
+        end
+    end
+    return slots
+end
+
+function addon:GetReagentPrices(slots, modifiers)
+    local prices = {}
+    local hasAny = false
+    if not (Auctionator and Auctionator.API and Auctionator.API.v1
+            and Auctionator.API.v1.GetAuctionPriceByItemID) then
+        return prices, false
+    end
+    local function fetch(itemID)
+        if not itemID or prices[itemID] then return end
+        local ok, price = pcall(Auctionator.API.v1.GetAuctionPriceByItemID, "CraftersMark", itemID)
+        if ok and type(price) == "number" and price > 0 then
+            prices[itemID] = price
+            hasAny = true
+        end
+    end
+    for _, slot in ipairs(slots) do
+        for _, itemID in ipairs(slot.ranks) do fetch(itemID) end
+    end
+    for _, mr in ipairs(modifiers or {}) do fetch(mr.itemID) end
+    return prices, hasAny
+end
+
+function addon:RunSim(recipeID, slots, baseReagents, prices)
+    local n = #slots
+    if n == 0 then return nil, false, nil end
+
+    local simIndices = {}
+    for _, slot in ipairs(slots) do simIndices[slot.dataSlotIndex] = true end
+
+    local function buildReagents(combo)
+        local t = {}
+        for _, r in ipairs(baseReagents) do
+            if not simIndices[r.dataSlotIndex] then
+                table.insert(t, r)
+            end
+        end
+        for i, slot in ipairs(slots) do
+            local r1qty = combo[i]
+            local r2qty = slot.quantityRequired - r1qty
+            if r1qty > 0 then
+                table.insert(t, {reagent = {itemID = slot.ranks[1]}, quantity = r1qty, dataSlotIndex = slot.dataSlotIndex})
+            end
+            if r2qty > 0 then
+                table.insert(t, {reagent = {itemID = slot.ranks[2]}, quantity = r2qty, dataSlotIndex = slot.dataSlotIndex})
+            end
+        end
+        return t
+    end
+
+    local function checkQ5(combo)
+        local ok, info = pcall(C_TradeSkillUI.GetCraftingOperationInfo, recipeID, buildReagents(combo), nil, false)
+        if not ok or not info then return false, nil end
+        local skill = (info.baseSkill or 0) + (info.bonusSkill or 0)
+        return skill >= (info.upperSkillTreshold or math.huge), info
+    end
+
+    local combo = {}
+    for i = 1, n do combo[i] = 0 end
+
+    local canQ5, operationInfo = checkQ5(combo)
+    if not canQ5 then
+        return combo, false, operationInfo
+    end
+
+    local slotOrder = {}
+    for i = 1, n do slotOrder[i] = i end
+    if prices and next(prices) then
+        table.sort(slotOrder, function(a, b)
+            local pa = prices[slots[a].ranks[2]] or prices[slots[a].ranks[1]] or 0
+            local pb = prices[slots[b].ranks[2]] or prices[slots[b].ranks[1]] or 0
+            return pa > pb
+        end)
+    end
+
+    for _, i in ipairs(slotOrder) do
+        local qty = slots[i].quantityRequired
+        for count = 1, qty do
+            combo[i] = count
+            local q5, info = checkQ5(combo)
+            if q5 then
+                operationInfo = info
+            else
+                combo[i] = count - 1
+                break
+            end
+        end
+    end
+
+    local ok2, fi = pcall(C_TradeSkillUI.GetCraftingOperationInfo, recipeID, buildReagents(combo), nil, false)
+    return combo, true, ok2 and fi or operationInfo
+end
+
+function addon:OnSimClick()
+    local cf = ProfessionsFrame.CraftingPage.SchematicForm
+    if not cf or not cf.transaction then return end
+    local recipeID = cf.transaction.recipeID
+    if not recipeID then return end
+
+    local simSlots = self:GetSimSlots(recipeID)
+    if #simSlots == 0 then
+        print("|cffff0000CraftersMark:|r No quality reagents found for this recipe.")
+        return
+    end
+
+    local baseReagents = {}
+    pcall(function()
+        local reagents = cf.transaction:CreateReagentInfoTbl() or {}
+        for _, r in ipairs(reagents) do table.insert(baseReagents, r) end
+        local opts = cf.transaction:CreateOptionalOrFinishingCraftingReagentInfoTbl() or {}
+        for _, r in ipairs(opts) do table.insert(baseReagents, r) end
+    end)
+
+    do
+        local schOk, schematic = pcall(C_TradeSkillUI.GetRecipeSchematic, recipeID, false)
+        if schOk and schematic and schematic.reagentSlotSchematics then
+            local optSlotMap = {}
+            for _, slot in ipairs(schematic.reagentSlotSchematics) do
+                if slot.reagentType ~= Enum.CraftingReagentType.Basic then
+                    optSlotMap[slot.dataSlotIndex] = slot
+                end
+            end
+
+            local optSimIndices = {}
+            local optSimSlots   = {}
+            for _, r in ipairs(baseReagents) do
+                local rID  = r.reagent and r.reagent.itemID
+                local slot = rID and optSlotMap[r.dataSlotIndex]
+                if slot and slot.reagents and not optSimIndices[r.dataSlotIndex] then
+                    for j, sr in ipairs(slot.reagents) do
+                        if sr.itemID == rID then
+                            local qi = C_TradeSkillUI.GetItemReagentQualityInfo(rID)
+                            if qi then
+                                local r1ID, r2ID
+                                if qi.quality == 2 and j > 1 then
+                                    local prev = slot.reagents[j-1]
+                                    local qp   = prev and prev.itemID and C_TradeSkillUI.GetItemReagentQualityInfo(prev.itemID)
+                                    if qp and qp.quality == 1 then r1ID, r2ID = prev.itemID, rID end
+                                elseif qi.quality == 1 and j < #slot.reagents then
+                                    local nxt  = slot.reagents[j+1]
+                                    local qn   = nxt and nxt.itemID and C_TradeSkillUI.GetItemReagentQualityInfo(nxt.itemID)
+                                    if qn and qn.quality == 2 then r1ID, r2ID = rID, nxt.itemID end
+                                end
+                                if r1ID and r2ID then
+                                    table.insert(optSimSlots, {
+                                        dataSlotIndex    = r.dataSlotIndex,
+                                        quantityRequired = r.quantity,
+                                        ranks            = {r1ID, r2ID},
+                                    })
+                                    optSimIndices[r.dataSlotIndex] = true
+                                end
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+
+            if next(optSimIndices) then
+                local filtered = {}
+                for _, r in ipairs(baseReagents) do
+                    if not optSimIndices[r.dataSlotIndex] then
+                        table.insert(filtered, r)
+                    end
+                end
+                baseReagents = filtered
+                for _, s in ipairs(optSimSlots) do table.insert(simSlots, s) end
+            end
+        end
+    end
+
+    local simIndexSet = {}
+    for _, s in ipairs(simSlots) do simIndexSet[s.dataSlotIndex] = true end
+    local modifierReagents = {}
+    for _, r in ipairs(baseReagents) do
+        local rID = r.reagent and r.reagent.itemID
+        if rID and not simIndexSet[r.dataSlotIndex] then
+            table.insert(modifierReagents, {itemID = rID, quantity = r.quantity})
+        end
+    end
+
+    local prices, hasPrices = self:GetReagentPrices(simSlots, modifierReagents)
+    local bestCombo, canQ5, operationInfo = self:RunSim(recipeID, simSlots, baseReagents, prices)
+    local ok, err = pcall(function()
+        self:ShowSimFrame(simSlots, bestCombo, canQ5, operationInfo, prices, modifierReagents)
+    end)
+    if not ok then print("|cffff0000CraftersMark sim error:|r " .. tostring(err)) end
+end
+
+function addon:ShowSimFrame(simSlots, bestCombo, canQ5, operationInfo, prices, modifierReagents)
+    if not _G.CMSimFrame then
+        local f = CreateFrame("Frame", "CMSimFrame", UIParent, "ButtonFrameTemplate")
+        f:SetMovable(true)
+        f:EnableMouse(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        f:SetClampedToScreen(true)
+        f:SetFrameStrata("DIALOG")
+        f:SetPoint("CENTER")
+        f:Hide()
+        ButtonFrameTemplate_HidePortrait(f)
+        ButtonFrameTemplate_HideButtonBar(f)
+        if f.Inset then f.Inset:Hide() end
+        f:SetTitle("Quality Simulation")
+        f.rows = {}
+    end
+
+    local f = _G.CMSimFrame
+    local ICON, PAD, ROW_H = 18, 6, 22
+    local NAME_W, COL_W, LEFT, TOP = 180, 50, 12, -34
+
+    f.rows = f.rows or {}
+
+    if not f.hdrName then
+        f.hdrName   = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        f.hdrR1     = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        f.hdrR2     = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        f.divLine   = f:CreateTexture(nil, "ARTWORK")
+        f.divLine:SetColorTexture(0.4, 0.4, 0.4, 0.8)
+        f.divLine:SetHeight(1)
+        f.resultStr = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        f.resultStr:SetJustifyH("LEFT")
+        f.costStr   = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        f.costStr:SetJustifyH("LEFT")
+        f.savingsStr = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        f.savingsStr:SetJustifyH("LEFT")
+        f.hintStr   = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        f.hintStr:SetJustifyH("LEFT")
+        f.hintStr:SetTextColor(0.5, 0.5, 0.5)
+        f.hintStr:SetText("Tip: select optional reagents (crest, etc.) then hit Sim to include their difficulty.")
+    end
+
+    local hdrR1Icon, hdrR2Icon = "R1", "R2"
+    if simSlots[1] then
+        local qi1 = simSlots[1].ranks[1] and C_TradeSkillUI.GetItemReagentQualityInfo(simSlots[1].ranks[1])
+        local qi2 = simSlots[1].ranks[2] and C_TradeSkillUI.GetItemReagentQualityInfo(simSlots[1].ranks[2])
+        if qi1 and qi1.iconSmall then hdrR1Icon = CreateAtlasMarkup(qi1.iconSmall, 20, 20) end
+        if qi2 and qi2.iconSmall then hdrR2Icon = CreateAtlasMarkup(qi2.iconSmall, 20, 20) end
+    end
+
+    f.hdrName:SetPoint("TOPLEFT", f, "TOPLEFT", LEFT + ICON + PAD, TOP)
+    f.hdrName:SetText("Reagent")
+    f.hdrR1:SetPoint("TOPLEFT",   f, "TOPLEFT", LEFT + ICON + PAD + NAME_W,         TOP)
+    f.hdrR1:SetWidth(COL_W)
+    f.hdrR1:SetJustifyH("CENTER")
+    f.hdrR1:SetText(hdrR1Icon)
+    f.hdrR2:SetPoint("TOPLEFT",   f, "TOPLEFT", LEFT + ICON + PAD + NAME_W + COL_W, TOP)
+    f.hdrR2:SetWidth(COL_W)
+    f.hdrR2:SetJustifyH("CENTER")
+    f.hdrR2:SetText(hdrR2Icon)
+    f.divLine:SetPoint("TOPLEFT", f, "TOPLEFT", LEFT, TOP - ROW_H + 4)
+    f.divLine:SetWidth(ICON + PAD + NAME_W + COL_W * 2)
+
+    local rowY = TOP - ROW_H - PAD
+    for i, slot in ipairs(simSlots) do
+        local r1qty = bestCombo and bestCombo[i] or 0
+        local iID  = slot.ranks[1]
+        local name, _, _, _, _, _, _, _, _, icon = C_Item.GetItemInfo(iID)
+        name = name or ("Item " .. tostring(iID))
+
+        local row = f.rows[i]
+        if not row then
+            row = CreateFrame("Frame", nil, f)
+            f.rows[i]   = row
+            row.iconTex = row:CreateTexture(nil, "ARTWORK")
+            row.iconTex:SetSize(ICON, ICON)
+            row.iconTex:SetPoint("LEFT", 0, 0)
+            row.nameStr = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.nameStr:SetPoint("LEFT", row.iconTex, "RIGHT", PAD, 0)
+            row.nameStr:SetJustifyH("LEFT")
+            row.r1Text  = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.r1Text:SetJustifyH("CENTER")
+            row.r2Text  = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.r2Text:SetJustifyH("CENTER")
+        end
+
+        row:SetSize(ICON + PAD + NAME_W + COL_W * 2, ROW_H)
+        row:SetPoint("TOPLEFT", f, "TOPLEFT", LEFT, rowY)
+        row:Show()
+
+        row.iconTex:SetTexture(icon)
+        row.nameStr:SetWidth(NAME_W - PAD)
+        row.nameStr:SetText(name)
+
+        row.r1Text:ClearAllPoints()
+        row.r1Text:SetPoint("LEFT", row, "LEFT", ICON + PAD + NAME_W, 0)
+        row.r1Text:SetWidth(COL_W)
+        row.r2Text:ClearAllPoints()
+        row.r2Text:SetPoint("LEFT", row, "LEFT", ICON + PAD + NAME_W + COL_W, 0)
+        row.r2Text:SetWidth(COL_W)
+
+        local qty1 = r1qty
+        local qty2 = slot.quantityRequired - r1qty
+        row.r1Text:SetText(tostring(qty1))
+        row.r1Text:SetTextColor(qty1 > 0 and 1 or 0.45, qty1 > 0 and 1 or 0.45, qty1 > 0 and 1 or 0.45)
+        row.r2Text:SetText(tostring(qty2))
+        row.r2Text:SetTextColor(qty2 > 0 and 1 or 0.45, qty2 > 0 and 1 or 0.45, qty2 > 0 and 1 or 0.45)
+
+        rowY = rowY - ROW_H
+    end
+
+    for i = #simSlots + 1, #f.rows do
+        if f.rows[i] then f.rows[i]:Hide() end
+    end
+
+    modifierReagents = modifierReagents or {}
+    if not f.modRows then f.modRows = {} end
+    if #modifierReagents > 0 then
+        if not f.modDivLine then
+            f.modDivLine = f:CreateTexture(nil, "ARTWORK")
+            f.modDivLine:SetColorTexture(0.4, 0.4, 0.4, 0.5)
+            f.modDivLine:SetHeight(1)
+        end
+        f.modDivLine:SetPoint("TOPLEFT", f, "TOPLEFT", LEFT, rowY - 3)
+        f.modDivLine:SetWidth(ICON + PAD + NAME_W + COL_W * 2)
+        f.modDivLine:Show()
+        rowY = rowY - ROW_H
+    elseif f.modDivLine then
+        f.modDivLine:Hide()
+    end
+    for mi, mr in ipairs(modifierReagents) do
+        local mName, _, _, _, _, _, _, _, _, mIcon = C_Item.GetItemInfo(mr.itemID)
+        mName = mName or ("Item " .. tostring(mr.itemID))
+        local mrow = f.modRows[mi]
+        if not mrow then
+            mrow = CreateFrame("Frame", nil, f)
+            f.modRows[mi]   = mrow
+            mrow.iconTex = mrow:CreateTexture(nil, "ARTWORK")
+            mrow.iconTex:SetSize(ICON, ICON)
+            mrow.iconTex:SetPoint("LEFT", 0, 0)
+            mrow.nameStr = mrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            mrow.nameStr:SetPoint("LEFT", mrow.iconTex, "RIGHT", PAD, 0)
+            mrow.nameStr:SetJustifyH("LEFT")
+            mrow.qtyStr  = mrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            mrow.qtyStr:SetPoint("LEFT", mrow.nameStr, "RIGHT", PAD, 0)
+            mrow.qtyStr:SetTextColor(0.7, 0.7, 0.7)
+        end
+        mrow:SetSize(ICON + PAD + NAME_W + COL_W * 2, ROW_H)
+        mrow:SetPoint("TOPLEFT", f, "TOPLEFT", LEFT, rowY)
+        mrow.iconTex:SetTexture(mIcon)
+        mrow.nameStr:SetWidth(NAME_W + COL_W - PAD)
+        mrow.nameStr:SetText(mName)
+        mrow.qtyStr:SetText("×"..mr.quantity)
+        mrow:Show()
+        rowY = rowY - ROW_H
+    end
+    for mi = #modifierReagents + 1, #f.modRows do
+        if f.modRows[mi] then f.modRows[mi]:Hide() end
+    end
+
+    local resultY = rowY - PAD
+    f.resultStr:ClearAllPoints()
+    f.resultStr:SetPoint("TOPLEFT", f, "TOPLEFT", LEFT, resultY)
+    f.resultStr:SetWidth(ICON + PAD + NAME_W + COL_W * 2)
+
+    if canQ5 then
+        f.resultStr:SetText("|cff00ff00Q5 achievable without concentration|r")
+    else
+        local skill    = operationInfo and ((operationInfo.baseSkill or 0) + (operationInfo.bonusSkill or 0)) or 0
+        local need     = operationInfo and (operationInfo.upperSkillTreshold or 0) or 0
+        local gap      = need - skill
+        local curQ     = operationInfo and (operationInfo.craftingQuality or 0) or 0
+        local curQIcon = curQ > 0 and format("|A:Professions-Icon-Quality-Tier%d:12:12|a", curQ) or ""
+        if gap > 0 then
+            f.resultStr:SetText(format("%sBest quality: Q%d — |cffff8000%d skill short, use concentration|r", curQIcon, curQ, gap))
+        else
+            f.resultStr:SetText("|cffff0000Q5 not achievable for this recipe|r")
+        end
+    end
+
+    f.costStr:ClearAllPoints()
+    f.costStr:SetPoint("TOPLEFT", f.resultStr, "BOTTOMLEFT", 0, -4)
+    f.costStr:SetWidth(ICON + PAD + NAME_W + COL_W * 2)
+
+    local function coin(amount)
+        return (C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString)
+            and C_CurrencyInfo.GetCoinTextureString(amount)
+            or GetMoneyString(amount)
+    end
+
+    local totalCost, maxCost, allPriced = 0, 0, true
+    if prices and next(prices) and bestCombo then
+        for i, slot in ipairs(simSlots) do
+            local r1qty = bestCombo[i] or 0
+            local r2qty = slot.quantityRequired - r1qty
+            local r1price = prices[slot.ranks[1]]
+            local r2price = prices[slot.ranks[2]]
+            if r1qty > 0 then
+                if r1price then totalCost = totalCost + r1price * r1qty else allPriced = false end
+            end
+            if r2qty > 0 then
+                if r2price then totalCost = totalCost + r2price * r2qty else allPriced = false end
+            end
+            if r2price then
+                maxCost = maxCost + r2price * slot.quantityRequired
+            end
+        end
+        for _, mr in ipairs(modifierReagents or {}) do
+            local mp = prices[mr.itemID]
+            if mp then
+                totalCost = totalCost + mp * mr.quantity
+                maxCost   = maxCost   + mp * mr.quantity
+            end
+        end
+        local costText = allPriced
+            and ("Est. cost: " .. coin(totalCost))
+            or  ("Est. cost: " .. coin(totalCost) .. " |cffaaaaaa(partial)|r")
+        f.costStr:SetText(costText)
+        f.costStr:Show()
+    else
+        f.costStr:Hide()
+    end
+
+    local savings = maxCost - totalCost
+    if f.costStr:IsShown() and savings > 0 then
+        f.savingsStr:ClearAllPoints()
+        f.savingsStr:SetPoint("TOPLEFT", f.costStr, "BOTTOMLEFT", 0, -2)
+        f.savingsStr:SetWidth(ICON + PAD + NAME_W + COL_W * 2)
+        f.savingsStr:SetText("|cff00ff00Saves " .. coin(savings) .. "|r vs all max-rank")
+        f.savingsStr:Show()
+    else
+        f.savingsStr:Hide()
+    end
+
+    f.hintStr:ClearAllPoints()
+    f.hintStr:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", LEFT, 10)
+    f.hintStr:SetWidth(ICON + PAD + NAME_W + COL_W * 2)
+
+    local extraH = (f.costStr:IsShown() and ROW_H or 0)
+                 + (f.savingsStr:IsShown() and ROW_H or 0)
+                 + ROW_H
+    f:SetHeight(math.abs(resultY) + ROW_H + extraH + 20)
+    f:SetWidth(LEFT * 2 + ICON + PAD + NAME_W + COL_W * 2)
+    if not f:IsShown() then
+        f:ClearAllPoints()
+        f:SetPoint("CENTER")
+    end
+    f:Show()
+    f:Raise()
+end
