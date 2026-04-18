@@ -705,9 +705,9 @@ function addon:BuildReagentToggle(parent)
 
     function btn:UpdateVisual()
         if self.active then
-            self:SetText(GREEN_FONT_COLOR:WrapTextInColorCode("Lock All"))
+            self:SetText(GREEN_FONT_COLOR:WrapTextInColorCode("Reset"))
         else
-            self:SetText(YELLOW_FONT_COLOR:WrapTextInColorCode("Unlock All"))
+            self:SetText(YELLOW_FONT_COLOR:WrapTextInColorCode("Override"))
         end
     end
     btn:UpdateVisual()
