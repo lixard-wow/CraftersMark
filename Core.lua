@@ -704,11 +704,11 @@ function addon:BuildReagentToggle(parent)
     btn.active = false
 
     function btn:UpdateVisual()
-        if self.active then
-            self:SetText(GREEN_FONT_COLOR:WrapTextInColorCode("Reset"))
-        else
-            self:SetText(YELLOW_FONT_COLOR:WrapTextInColorCode("Override"))
+        local r, g, b = self.active and 0.08 or 0.45, self.active and 0.08 or 0.08, self.active and 0.08 or 0.08
+        for _, tex in ipairs({ self:GetNormalTexture(), self:GetPushedTexture(), self:GetHighlightTexture() }) do
+            if tex then tex:SetVertexColor(r, g, b) end
         end
+        self:SetText(YELLOW_FONT_COLOR:WrapTextInColorCode(self.active and "Reset" or "Override"))
     end
     btn:UpdateVisual()
 
