@@ -835,27 +835,28 @@ function addon:AutoSelectCurrencyReagents()
 end
 
 function addon:ClearAutoAllocations()
-    local function findWidget(form, slotIndex)
-        local containers = {form.Reagents, form.OptionalReagents, form.FinishingReagents,
-                            form.ReagentContainer and form.ReagentContainer.Reagents}
-        for _, container in ipairs(containers) do
-            if container then
-                for i = 1, container:GetNumChildren() do
-                    local child = select(i, container:GetChildren())
-                    if child and child.reagentSlotSchematic
-                        and child.reagentSlotSchematic.slotIndex == slotIndex then
-                        return child
-                    end
-                end
-            end
-        end
-    end
-
     local function clearForm(form)
         if not form or not form:IsVisible() or not form.transaction then return end
         local tx = form.transaction
         local schematic = tx.recipeSchematic
         if not schematic or not schematic.reagentSlotSchematics then return end
+
+        local function findWidget(slotIndex)
+            local containers = {form.Reagents, form.OptionalReagents, form.FinishingReagents,
+                                form.ReagentContainer and form.ReagentContainer.Reagents}
+            for _, container in ipairs(containers) do
+                if container then
+                    for i = 1, container:GetNumChildren() do
+                        local child = select(i, container:GetChildren())
+                        if child and child.reagentSlotSchematic
+                            and child.reagentSlotSchematic.slotIndex == slotIndex then
+                            return child
+                        end
+                    end
+                end
+            end
+        end
+
         for slotIndex, slotSchematic in ipairs(schematic.reagentSlotSchematics) do
             if slotSchematic.reagents then
                 local shouldClear = false
@@ -869,18 +870,21 @@ function addon:ClearAutoAllocations()
                     end
                 end
                 if shouldClear then
-                    local widget = findWidget(form, slotIndex)
+                    pcall(function()
+                        if tx.allocations then tx.allocations[slotIndex] = nil end
+                    end)
+                    pcall(function() tx:ClearAllocations(slotIndex) end)
+                    local widget = findWidget(slotIndex)
                     if widget then
-                        pcall(function() widget:SetReagent(nil) end)
-                    end
-                    if tx.ClearAllocations then
-                        pcall(function() tx:ClearAllocations(slotIndex) end)
-                    elseif tx.OverwriteAllocation and slotSchematic.reagents[1] then
-                        pcall(function() tx:OverwriteAllocation(slotIndex, slotSchematic.reagents[1], 0) end)
+                        pcall(function()
+                            widget.reagent = nil
+                            widget:Update()
+                        end)
                     end
                 end
             end
         end
+
         if form.TriggerEvent and ProfessionsRecipeSchematicFormMixin
             and ProfessionsRecipeSchematicFormMixin.Event
             and ProfessionsRecipeSchematicFormMixin.Event.AllocationsModified then
