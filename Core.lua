@@ -860,13 +860,13 @@ function addon:ClearAutoAllocations()
         for slotIndex, slotSchematic in ipairs(schematic.reagentSlotSchematics) do
             if slotSchematic.reagents then
                 local shouldClear = false
-                if slotSchematic.reagentType == Enum.CraftingReagentType.Basic then
-                    if #slotSchematic.reagents >= 2 then shouldClear = true end
-                elseif #slotSchematic.reagents == 1 then
-                    shouldClear = true
-                else
-                    for _, r in ipairs(slotSchematic.reagents) do
-                        if r.currencyID then shouldClear = true end
+                if slotSchematic.reagentType ~= Enum.CraftingReagentType.Basic then
+                    if #slotSchematic.reagents == 1 then
+                        shouldClear = true
+                    else
+                        for _, r in ipairs(slotSchematic.reagents) do
+                            if r.currencyID then shouldClear = true end
+                        end
                     end
                 end
                 if shouldClear then
