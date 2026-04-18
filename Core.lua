@@ -1318,48 +1318,9 @@ function addon:ShowSimFrame(simSlots, bestCombo, canQ5, operationInfo, prices, m
         if f.rows[i] then f.rows[i]:Hide() end
     end
 
-    modifierReagents = modifierReagents or {}
     if not f.modRows then f.modRows = {} end
-    if #modifierReagents > 0 then
-        if not f.modDivLine then
-            f.modDivLine = f:CreateTexture(nil, "ARTWORK")
-            f.modDivLine:SetColorTexture(0.4, 0.4, 0.4, 0.5)
-            f.modDivLine:SetHeight(1)
-        end
-        f.modDivLine:SetPoint("TOPLEFT", f, "TOPLEFT", LEFT, rowY - 3)
-        f.modDivLine:SetWidth(ICON + PAD + NAME_W + COL_W * 2)
-        f.modDivLine:Show()
-        rowY = rowY - ROW_H
-    elseif f.modDivLine then
-        f.modDivLine:Hide()
-    end
-    for mi, mr in ipairs(modifierReagents) do
-        local mName, _, _, _, _, _, _, _, _, mIcon = C_Item.GetItemInfo(mr.itemID)
-        mName = mName or ("Item " .. tostring(mr.itemID))
-        local mrow = f.modRows[mi]
-        if not mrow then
-            mrow = CreateFrame("Frame", nil, f)
-            f.modRows[mi]   = mrow
-            mrow.iconTex = mrow:CreateTexture(nil, "ARTWORK")
-            mrow.iconTex:SetSize(ICON, ICON)
-            mrow.iconTex:SetPoint("LEFT", 0, 0)
-            mrow.nameStr = mrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            mrow.nameStr:SetPoint("LEFT", mrow.iconTex, "RIGHT", PAD, 0)
-            mrow.nameStr:SetJustifyH("LEFT")
-            mrow.qtyStr  = mrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            mrow.qtyStr:SetPoint("LEFT", mrow.nameStr, "RIGHT", PAD, 0)
-            mrow.qtyStr:SetTextColor(0.7, 0.7, 0.7)
-        end
-        mrow:SetSize(ICON + PAD + NAME_W + COL_W * 2, ROW_H)
-        mrow:SetPoint("TOPLEFT", f, "TOPLEFT", LEFT, rowY)
-        mrow.iconTex:SetTexture(mIcon)
-        mrow.nameStr:SetWidth(NAME_W + COL_W - PAD)
-        mrow.nameStr:SetText(mName)
-        mrow.qtyStr:SetText("×"..mr.quantity)
-        mrow:Show()
-        rowY = rowY - ROW_H
-    end
-    for mi = #modifierReagents + 1, #f.modRows do
+    if f.modDivLine then f.modDivLine:Hide() end
+    for mi = 1, #f.modRows do
         if f.modRows[mi] then f.modRows[mi]:Hide() end
     end
 
