@@ -724,6 +724,7 @@ function addon:BuildReagentToggle(parent)
             addon:UnhookAll()
             addon:SetFlyoutWatcher(false)
             addon._reagentCache = nil
+            addon:ClearAutoAllocations()
             addon:ClearReagentSlotColors()
         end
 
@@ -831,6 +832,68 @@ function addon:AutoSelectCurrencyReagents()
         and pf.OrdersPage.OrderView.OrderDetails
         and pf.OrdersPage.OrderView.OrderDetails.SchematicForm)
     applyToForm(ProfessionsCustomerOrdersFrame and ProfessionsCustomerOrdersFrame.Form)
+end
+
+function addon:ClearAutoAllocations()
+    local function findWidget(form, slotIndex)
+        local containers = {form.Reagents, form.OptionalReagents, form.FinishingReagents,
+                            form.ReagentContainer and form.ReagentContainer.Reagents}
+        for _, container in ipairs(containers) do
+            if container then
+                for i = 1, container:GetNumChildren() do
+                    local child = select(i, container:GetChildren())
+                    if child and child.reagentSlotSchematic
+                        and child.reagentSlotSchematic.slotIndex == slotIndex then
+                        return child
+                    end
+                end
+            end
+        end
+    end
+
+    local function clearForm(form)
+        if not form or not form:IsVisible() or not form.transaction then return end
+        local tx = form.transaction
+        local schematic = tx.recipeSchematic
+        if not schematic or not schematic.reagentSlotSchematics then return end
+        for slotIndex, slotSchematic in ipairs(schematic.reagentSlotSchematics) do
+            if slotSchematic.reagents then
+                local shouldClear = false
+                if slotSchematic.reagentType == Enum.CraftingReagentType.Basic then
+                    if #slotSchematic.reagents >= 2 then shouldClear = true end
+                elseif #slotSchematic.reagents == 1 then
+                    shouldClear = true
+                else
+                    for _, r in ipairs(slotSchematic.reagents) do
+                        if r.currencyID then shouldClear = true end
+                    end
+                end
+                if shouldClear then
+                    local widget = findWidget(form, slotIndex)
+                    if widget then
+                        pcall(function() widget:SetReagent(nil) end)
+                    end
+                    if tx.ClearAllocations then
+                        pcall(function() tx:ClearAllocations(slotIndex) end)
+                    elseif tx.OverwriteAllocation and slotSchematic.reagents[1] then
+                        pcall(function() tx:OverwriteAllocation(slotIndex, slotSchematic.reagents[1], 0) end)
+                    end
+                end
+            end
+        end
+        if form.TriggerEvent and ProfessionsRecipeSchematicFormMixin
+            and ProfessionsRecipeSchematicFormMixin.Event
+            and ProfessionsRecipeSchematicFormMixin.Event.AllocationsModified then
+            pcall(function() form:TriggerEvent(ProfessionsRecipeSchematicFormMixin.Event.AllocationsModified) end)
+        end
+    end
+
+    local pf = ProfessionsFrame
+    clearForm(pf and pf.CraftingPage and pf.CraftingPage.SchematicForm)
+    clearForm(pf and pf.OrdersPage and pf.OrdersPage.OrderView
+        and pf.OrdersPage.OrderView.OrderDetails
+        and pf.OrdersPage.OrderView.OrderDetails.SchematicForm)
+    clearForm(ProfessionsCustomerOrdersFrame and ProfessionsCustomerOrdersFrame.Form)
 end
 
 function addon:GetActiveRecipeID()
